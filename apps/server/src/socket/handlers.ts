@@ -18,7 +18,7 @@ import {
 import { gameRegistry } from "../gameRegistry.js";
 import { config } from "../config.js";
 import { listPresets, savePreset } from "../db/persistence.js";
-import { broadcastGameState, notifyGame, pushChasseurPrompts, pushNightPrompts, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
+import { broadcastGameState, notifyGame, notifyPlayer, pushChasseurPrompts, pushNightPrompts, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { pushWolfRoomState, relayWolfChatMessage } from "./wolfRoom.js";
 import { forceNextPhase } from "./forceNextPhase.js";
 import { safeAck, type Ack, type SocketData } from "./types.js";
@@ -283,6 +283,17 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
         engine.submitNightAction(playerId, payload.actionType, payload.targetId);
+
+        // The Voyante's power is otherwise silent: her INSPECT action has
+        // no other feedback channel, so tell her privately what she saw.
+        if (payload.actionType === "INSPECT") {
+          const result = engine.getLastVoyanteResult(playerId);
+          if (result) {
+            const verdict = result.result === "LOUP" ? "un Loup-Garou" : "un(e) villageois(e) (pas de loup)";
+            notifyPlayer(io, playerId, "INFO", `🔮 ${result.targetNickname} est ${verdict}.`);
+          }
+        }
+
         // Must re-push night prompts (not just broadcast state): once the
         // wolves lock in a target, roles prompted later in priority order
         // (e.g. Sorcière) need their context refreshed with that target —

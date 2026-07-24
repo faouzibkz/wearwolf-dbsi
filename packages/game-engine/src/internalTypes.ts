@@ -25,6 +25,13 @@ export interface InternalPlayer {
   salvateurLastProtectedId: string | null;
   mowgliFatherId: string | null;
   mowgliTransformed: boolean;
+  /**
+   * Voyante-only: how many times this player (as a Voyante) has inspected
+   * each target, keyed by targetId. Needed for the Loup Blanc house rule:
+   * his cover holds on a first inspection (shown as villageois) and only
+   * breaks on a second inspection of him by the same Voyante.
+   */
+  voyanteInspectionCounts: Record<string, number>;
 }
 
 export interface NightActionSubmitted {

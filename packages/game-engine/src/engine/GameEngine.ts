@@ -154,6 +154,7 @@ export class GameEngine {
       salvateurLastProtectedId: null,
       mowgliFatherId: null,
       mowgliTransformed: false,
+      voyanteInspectionCounts: {},
     };
     this.state.players.set(player.id, player);
     this.state.playerOrder.push(player.id);
@@ -275,6 +276,24 @@ export class GameEngine {
   submitNightAction(playerId: string, actionType: string, targetId?: string): void {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
     NightResolver.submitNightAction(this.ctx(), playerId, actionType, targetId);
+  }
+
+  /**
+   * Only ever called server-side for the acting Voyante's own socket —
+   * never broadcast. Returns her most recent inspection this night, if any.
+   */
+  getLastVoyanteResult(
+    voyanteId: string,
+  ): { targetId: string; targetNickname: string; result: "LOUP" | "NON_LOUP" } | null {
+    const inspections = this.state.nightScratch?.voyanteInspections ?? [];
+    for (let i = inspections.length - 1; i >= 0; i -= 1) {
+      const entry = inspections[i]!;
+      if (entry.voyanteId === voyanteId) {
+        const target = this.state.players.get(entry.targetId);
+        return { targetId: entry.targetId, targetNickname: target?.nickname ?? "?", result: entry.result };
+      }
+    }
+    return null;
   }
 
   /** Wolves (and a transformed Mowgli) share a private room, computed fresh each call. */

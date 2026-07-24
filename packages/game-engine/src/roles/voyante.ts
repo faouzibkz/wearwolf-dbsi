@@ -15,7 +15,19 @@ export const voyanteRole: RoleModule = {
   applyNightAction(ctx, actor, action) {
     if (action.actionType !== "INSPECT" || !action.targetId) return;
     const target = ctx.getPlayer(action.targetId);
-    const result = target.roleId === "LOUP_GAROU" || target.roleId === "LOUP_BLANC" ? "LOUP" : "NON_LOUP";
+    const timesInspected = (actor.voyanteInspectionCounts[action.targetId] ?? 0) + 1;
+    actor.voyanteInspectionCounts[action.targetId] = timesInspected;
+
+    let result: "LOUP" | "NON_LOUP";
+    if (target.roleId === "LOUP_BLANC") {
+      // House rule: the Loup Blanc's cover holds on the Voyante's first
+      // inspection of him (shown as a villager); a second inspection of
+      // that same player is what reveals him as a wolf.
+      result = timesInspected >= 2 ? "LOUP" : "NON_LOUP";
+    } else {
+      result = target.roleId === "LOUP_GAROU" ? "LOUP" : "NON_LOUP";
+    }
+
     ctx.state.nightScratch!.voyanteInspections.push({
       voyanteId: actor.id,
       targetId: action.targetId,
