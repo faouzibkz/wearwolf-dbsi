@@ -1,0 +1,68 @@
+// Prisma schema for the Loup-Garou companion app.
+//
+// Design note: the GameEngine (packages/game-engine) keeps the live,
+// in-memory authoritative state for every active game — that's what the
+// server actually plays against, and it's what makes the engine fast and
+// simple to unit test. Postgres exists for three things: (1) surviving a
+// server restart by persisting a snapshot of each active game, (2) admin
+// presets, and (3) a durable history of finished games + logs for stats.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Game {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  phase       String
+  configJson  Json
+  stateJson   Json // full serialized GameEngine internal state (Maps -> arrays)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  endedAt     DateTime?
+  winner      String? // "VILLAGE" | "LOUPS" | null
+
+  logs    GameLogEntry[]
+  players PlayerRecord[]
+
+  @@index([code])
+}
+
+model PlayerRecord {
+  id           String   @id @default(uuid())
+  game         Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  gameId       String
+  nickname     String
+  roleId       String
+  isAlive      Boolean  @default(true)
+  isChef       Boolean  @default(false)
+  deathCause   String?
+  joinedAt     DateTime @default(now())
+
+  @@index([gameId])
+}
+
+model GameLogEntry {
+  id        String   @id @default(uuid())
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  gameId    String
+  dayOrNight String
+  message   String
+  timestamp DateTime @default(now())
+
+  @@index([gameId])
+}
+
+model Preset {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  configJson Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

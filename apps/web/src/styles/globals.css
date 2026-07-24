@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap");
+
+html,
+body {
+  background-color: #05060a;
+  color: #e8e3d8;
+}
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  background-image: radial-gradient(circle at 50% -20%, #1c2338 0%, #05060a 60%);
+  min-height: 100vh;
+}
+
+.font-display {
+  font-family: "Cinzel", Georgia, serif;
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg bg-blood-500 hover:bg-blood-400 text-white font-medium transition shadow-md shadow-black/40;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 rounded-lg border border-night-600 hover:border-gold-400/60 text-night-100 font-medium transition;
+  }
+  .card {
+    @apply rounded-2xl border border-night-600 bg-night-800/60 p-5 backdrop-blur-sm;
+  }
+  .input {
+    @apply w-full rounded-lg bg-night-900 border border-night-600 px-3 py-2 text-night-50 placeholder:text-night-600 focus:outline-none focus:ring-2 focus:ring-gold-400/60;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #2a3350;
+  border-radius: 4px;
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    box-shadow: 0 0 8px rgba(212, 175, 55, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(212, 175, 55, 0.6);
+  }
+}
+.glow-gold {
+  animation: glow 2.4s ease-in-out infinite;
+}
