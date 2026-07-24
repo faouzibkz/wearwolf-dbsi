@@ -12,6 +12,7 @@ export function LiveVoteList({
   candidates,
   allPlayers,
   dayVotes,
+  dayVoteTally,
   myId,
   interactive,
   onSelect,
@@ -19,6 +20,8 @@ export function LiveVoteList({
   candidates: PlayerPublic[];
   allPlayers: PlayerPublic[];
   dayVotes: Record<string, string>;
+  /** Weighted vote count per target — the Chef's vote counts double while active, so use this for the number/bar, not voterIds.length. */
+  dayVoteTally: Record<string, number>;
   myId: string | null;
   /** false for spectators/dead players: they see the live tally, but can't vote. */
   interactive: boolean;
@@ -32,18 +35,18 @@ export function LiveVoteList({
       const voterIds = Object.entries(dayVotes)
         .filter(([, targetId]) => targetId === player.id)
         .map(([voterId]) => voterId);
-      return { player, voterIds };
+      const weight = dayVoteTally[player.id] ?? 0;
+      return { player, voterIds, weight };
     })
-    .sort((a, b) => b.voterIds.length - a.voterIds.length);
+    .sort((a, b) => b.weight - a.weight);
 
-  const maxVotes = Math.max(1, ...rows.map((r) => r.voterIds.length));
+  const maxWeight = Math.max(1, ...rows.map((r) => r.weight));
 
   return (
     <ul className="space-y-2">
-      {rows.map(({ player, voterIds }) => {
+      {rows.map(({ player, voterIds, weight }) => {
         const clickable = interactive && player.isAlive;
         const isMyVote = myVoteTargetId === player.id;
-        const count = voterIds.length;
         return (
           <li
             key={player.id}
@@ -60,21 +63,24 @@ export function LiveVoteList({
               </span>
               <span
                 className={`shrink-0 font-display text-sm tabular-nums transition-colors ${
-                  count > 0 ? "text-gold-300" : "text-night-600"
+                  weight > 0 ? "text-gold-300" : "text-night-600"
                 }`}
               >
-                {count} vote{count !== 1 ? "s" : ""}
+                {weight} vote{weight !== 1 ? "s" : ""}
               </span>
             </div>
             <div className="mt-1.5 h-1.5 rounded-full bg-night-900/60 overflow-hidden">
               <div
                 className="h-full bg-blood-500 rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${(count / maxVotes) * 100}%` }}
+                style={{ width: `${(weight / maxWeight) * 100}%` }}
               />
             </div>
-            {count > 0 && (
+            {voterIds.length > 0 && (
               <p className="mt-1.5 text-xs text-night-100/60 truncate">
-                {voterIds.map(nicknameOf).join(", ")}
+                {voterIds.map((id) => {
+                  const isChefVoter = allPlayers.find((p) => p.id === id)?.isChef;
+                  return isChefVoter ? `👑 ${nicknameOf(id)}` : nicknameOf(id);
+                }).join(", ")}
               </p>
             )}
           </li>

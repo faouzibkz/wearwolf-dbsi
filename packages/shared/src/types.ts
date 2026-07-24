@@ -277,6 +277,13 @@ export interface GameStatePublic {
    * once a round resolves). Every player can see who is voting for whom.
    */
   dayVotes: Record<string, string>;
+  /**
+   * Live, weighted vote count per target (targetId -> total weight), same
+   * scope/lifetime as `dayVotes`. Reflects the Chef's double-vote bonus —
+   * use this for the displayed number, not `dayVotes.length`, or the
+   * Chef's vote will visually undercount.
+   */
+  dayVoteTally: Record<string, number>;
 }
 
 export interface EndGameStats {

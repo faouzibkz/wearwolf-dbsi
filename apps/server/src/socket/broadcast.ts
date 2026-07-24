@@ -59,6 +59,16 @@ export function pushChasseurPrompts(io: Server, engine: GameEngine): void {
   }
 }
 
+export function pushChefSuccessionPrompt(io: Server, engine: GameEngine): void {
+  const deadChefId = engine.getPendingChefSuccessionDeadChefId();
+  if (!deadChefId) return;
+  const eligibleSuccessorIds = engine
+    .getPublicState()
+    .players.filter((p) => p.isAlive)
+    .map((p) => p.id);
+  io.to(roomForPlayer(deadChefId)).emit(SOCKET_EVENTS.CHEF_SUCCESSION_PROMPT, { eligibleSuccessorIds });
+}
+
 export function pushRoleAssignments(io: Server, engine: GameEngine): void {
   for (const player of engine.getPlayers()) {
     io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.ROLE_ASSIGNED, {

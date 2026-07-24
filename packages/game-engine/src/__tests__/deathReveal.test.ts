@@ -53,8 +53,11 @@ describe("public death reveal (name + role, never the mechanism)", () => {
     const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1 }, 21);
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
     const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
-    const nightVictim = names.find((n) => n !== wolf)!;
-    const dayVictim = names.find((n) => n !== wolf && n !== nightVictim)!;
+    // Exclude names[0]: bootToNight1 always elects them Chef, and a dead
+    // Chef triggers the (unrelated) succession flow tested elsewhere,
+    // which would block the phase transitions this test exercises.
+    const nightVictim = names.find((n) => n !== wolf && n !== names[0])!;
+    const dayVictim = names.find((n) => n !== wolf && n !== nightVictim && n !== names[0])!;
 
     // Night 1: wolf kills nightVictim.
     engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[nightVictim]!);

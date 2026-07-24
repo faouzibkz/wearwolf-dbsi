@@ -9,7 +9,6 @@ const ACTION_LABELS: Record<string, string> = {
   PROTECT: "Choisissez un joueur à protéger cette nuit.",
   INSPECT: "Choisissez un joueur à sonder.",
   KILL_VOTE: "Votez avec les autres loups pour désigner une victime.",
-  DEVOUR_WOLF: "Vous pouvez dévorer un loup-garou cette nuit (optionnel).",
   SORCIERE_ACT: "Les loups ont choisi une victime. Que faites-vous ?",
   MARK: "Désignez un joueur qui recevra +2 votes demain.",
   CHOOSE_FATHER: "Choisissez en secret le joueur qui sera votre « père ».",
@@ -67,7 +66,8 @@ export function NightPromptPanel({
             </button>
           )}
           {ctx.canPoison && (
-            <PoisonPicker
+            <ExpandablePicker
+              label="☠️ Utiliser la potion de poison"
               players={eligible}
               onPick={(id) => {
                 onSubmit("POISON", id);
@@ -90,6 +90,49 @@ export function NightPromptPanel({
     );
   }
 
+  if (prompt.actionType === "LOUP_BLANC_ACT") {
+    const ctx = prompt.context as { killEligible: string[]; devourEligible: string[] };
+    const killTargets = players.filter((p) => ctx.killEligible.includes(p.id));
+    const devourTargets = players.filter((p) => ctx.devourEligible.includes(p.id));
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <p className="text-sm text-night-100/80">
+          Votez avec les autres loups pour désigner une victime cette nuit.
+        </p>
+        <PlayerList players={killTargets} selectable selectedId={selected} onSelect={setSelected} />
+        <button
+          className="btn-primary disabled:opacity-40"
+          disabled={!selected}
+          onClick={() => {
+            if (!selected) return;
+            onSubmit("KILL_VOTE", selected);
+            const target = killTargets.find((p) => p.id === selected);
+            setSentChoice({ label: target?.nickname ?? "?" });
+          }}
+        >
+          Confirmer{selected ? ` : ${killTargets.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
+        </button>
+        {devourTargets.length > 0 && (
+          <div className="pt-3 border-t border-night-700 space-y-2">
+            <p className="text-xs text-night-100/60">
+              Vous pouvez aussi dévorer secrètement un loup-garou cette nuit, à la place :
+            </p>
+            <ExpandablePicker
+              label="🐺 Dévorer un loup-garou"
+              players={devourTargets}
+              onPick={(id) => {
+                onSubmit("DEVOUR_WOLF", id);
+                const target = devourTargets.find((p) => p.id === id);
+                setSentChoice({ label: `Dévoré : ${target?.nickname ?? "?"}` });
+              }}
+            />
+          </div>
+        )}
+        <CountdownTimer endsAt={prompt.deadlineAt} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 animate-fade-in">
       <p className="text-sm text-night-100/80">{ACTION_LABELS[prompt.actionType] ?? "Choisissez une cible."}</p>
@@ -107,29 +150,27 @@ export function NightPromptPanel({
         >
           Confirmer{selected ? ` : ${eligible.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
         </button>
-        {prompt.actionType === "DEVOUR_WOLF" && (
-          <button
-            className="btn-secondary"
-            onClick={() => {
-              onSubmit("SKIP");
-              setSentChoice({ label: "Aucune action" });
-            }}
-          >
-            Passer
-          </button>
-        )}
       </div>
       <CountdownTimer endsAt={prompt.deadlineAt} />
     </div>
   );
 }
 
-function PoisonPicker({ players, onPick }: { players: PlayerPublic[]; onPick: (id: string) => void }) {
+/** Generic "click to reveal a target list" button, used for optional/secondary actions (poison potion, Loup Blanc's devour). */
+function ExpandablePicker({
+  label,
+  players,
+  onPick,
+}: {
+  label: string;
+  players: PlayerPublic[];
+  onPick: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
       <button className="btn-secondary" onClick={() => setOpen(true)}>
-        ☠️ Utiliser la potion de poison
+        {label}
       </button>
     );
   }

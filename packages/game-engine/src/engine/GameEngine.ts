@@ -66,6 +66,7 @@ export class GameEngine {
       pendingMowgliReveal: false,
       lastDeathPlayerIds: [],
       pendingChasseurShooterIds: [],
+      pendingChefSuccessionDeadChefId: null,
       pendingTieResolutionRule: null,
       rolesRevealedToPlayers: false,
       createdAt: Date.now(),
@@ -309,7 +310,7 @@ export class GameEngine {
     this.state.lastDeathPlayerIds = [];
     const { anyoneDied } = NightResolver.resolveNight(this.ctx(), this.state.nightNumber);
 
-    if (this.state.pendingChasseurShooterIds.length > 0) {
+    if (this.hasPendingBlockers()) {
       return { anyoneDied, blocked: true, mowgliTransformed: this.state.pendingMowgliReveal };
     }
 
@@ -323,17 +324,52 @@ export class GameEngine {
     this.state.pendingChasseurShooterIds.splice(index, 1);
     processDeaths(this.ctx(), [{ playerId: targetId, cause: "CHASSEUR_SHOT" }]);
 
-    if (this.state.pendingChasseurShooterIds.length > 0) {
-      return { anyoneDied: true };
-    }
-
     // Chasseur shots can happen after a night OR after a day-vote elimination.
+    this.tryResumeAfterBlockers();
+    return { anyoneDied: true };
+  }
+
+  // -------------------------------------------------------------------
+  // Chef du village succession (triggered when the elected Chef dies)
+  // -------------------------------------------------------------------
+
+  getPendingChefSuccessionDeadChefId(): string | null {
+    return this.state.pendingChefSuccessionDeadChefId;
+  }
+
+  chooseChefSuccessor(deadChefId: string, successorId: string): void {
+    if (this.state.pendingChefSuccessionDeadChefId !== deadChefId) {
+      throw new Error("Aucune succession de Chef en attente pour ce joueur.");
+    }
+    const successor = this.ctx().getPlayer(successorId);
+    if (!successor.isAlive) throw new Error("Le successeur doit être un joueur vivant.");
+    if (successorId === deadChefId) throw new Error("Le Chef doit désigner un autre joueur que lui-même.");
+
+    const oldChef = this.ctx().getPlayer(deadChefId);
+    oldChef.isChef = false;
+    successor.isChef = true;
+    this.state.chef.electedId = successorId;
+    this.state.pendingChefSuccessionDeadChefId = null;
+    this.appendLog(`${oldChef.nickname} désigne ${successor.nickname} comme nouveau Chef du village.`);
+
+    this.tryResumeAfterBlockers();
+  }
+
+  /** True while any death-triggered action (Chasseur shot, Chef succession) still needs resolving. */
+  private hasPendingBlockers(): boolean {
+    return (
+      this.state.pendingChasseurShooterIds.length > 0 || this.state.pendingChefSuccessionDeadChefId !== null
+    );
+  }
+
+  /** Resume whatever transition was paused for a pending blocker, once all of them have cleared. */
+  private tryResumeAfterBlockers(): void {
+    if (this.hasPendingBlockers()) return;
     if (this.state.phase === "NIGHT") {
-      this.finishMorning(true);
+      this.finishMorning(this.state.lastDeathPlayerIds.length > 0);
     } else {
       this.finishEliminationAndProceed();
     }
-    return { anyoneDied: true };
   }
 
   private finishMorning(anyoneDied: boolean): void {
@@ -403,7 +439,7 @@ export class GameEngine {
   }
 
   private finishEliminationAndProceed(): void {
-    if (this.state.pendingChasseurShooterIds.length > 0) return; // blocked, wait for shot(s)
+    if (this.hasPendingBlockers()) return; // blocked, wait for shot(s) and/or Chef succession
     const winner = checkVictory(this.ctx());
     if (winner) {
       this.endGame(winner);
@@ -488,6 +524,7 @@ export class GameEngine {
       // it can't leak a round-1 vote into TIE_DEFENSE or a stale round into
       // the next elimination.
       dayVotes: this.state.phase === "DAY_VOTE" ? Object.fromEntries(this.state.dayVote.votes) : {},
+      dayVoteTally: this.state.phase === "DAY_VOTE" ? VoteManager.computeLiveVoteTally(this.ctx()) : {},
     };
   }
 

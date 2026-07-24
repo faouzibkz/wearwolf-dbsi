@@ -38,6 +38,14 @@ export function processDeaths(ctx: EngineContext, deaths: DeathRequest[]): strin
     ctx.state.lastDeathPlayerIds.push(player.id);
     ctx.log(`${player.nickname} est mort — ${CAUSE_LABELS[next.cause] ?? next.cause}.`);
 
+    // The Chef du village title doesn't die with its holder: he gets one
+    // last act — naming a successor — before the game moves on. Blocks
+    // progression the same way a pending Chasseur shot does.
+    if (player.isChef && [...ctx.state.players.values()].some((p) => p.isAlive)) {
+      ctx.state.pendingChefSuccessionDeadChefId = player.id;
+      ctx.log(`${player.nickname} était Chef du village et doit désigner un successeur.`);
+    }
+
     const role = ROLE_REGISTRY[player.roleId];
     role.onDeath?.(ctx, player);
 

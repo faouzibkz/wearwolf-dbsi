@@ -50,6 +50,10 @@ export const SOCKET_EVENTS = {
   CHEF_VOTE_CAST: "chef:voteCast",
   CHEF_ELECTED: "chef:elected",
 
+  // --- chef succession (triggered when the elected Chef dies) ---
+  CHEF_SUCCESSION_PROMPT: "chef:successionPrompt", // server -> the now-dead ex-Chef only
+  CHEF_SUCCESSION_CHOOSE: "chef:successionChoose",
+
   // --- day vote ---
   DAY_VOTE_CAST: "day:voteCast",
   DAY_VOTE_RESULT: "day:voteResult", // admin only, detailed
@@ -133,6 +137,15 @@ export interface ChefVolunteerPayload {
 export interface ChefVoteCastPayload {
   voterId: string;
   candidateId: string;
+}
+
+export interface ChefSuccessionPromptPayload {
+  /** ids of currently alive players the dead ex-Chef may pick as successor */
+  eligibleSuccessorIds: string[];
+}
+
+export interface ChefSuccessionChoosePayload {
+  successorId: string;
 }
 
 export interface DayVoteCastPayload {

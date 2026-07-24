@@ -7,6 +7,7 @@ import {
   type AdminResolveTiePayload,
   type AdminUpdateConfigPayload,
   type ChasseurShootPayload,
+  type ChefSuccessionChoosePayload,
   type ChefVoteCastPayload,
   type ChefVolunteerPayload,
   type DayVoteCastPayload,
@@ -18,7 +19,7 @@ import {
 import { gameRegistry } from "../gameRegistry.js";
 import { config } from "../config.js";
 import { listPresets, savePreset } from "../db/persistence.js";
-import { broadcastGameState, notifyGame, notifyPlayer, pushChasseurPrompts, pushNightPrompts, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
+import { broadcastGameState, notifyGame, notifyPlayer, pushChasseurPrompts, pushChefSuccessionPrompt, pushNightPrompts, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { pushWolfRoomState, relayWolfChatMessage } from "./wolfRoom.js";
 import { forceNextPhase } from "./forceNextPhase.js";
 import { safeAck, type Ack, type SocketData } from "./types.js";
@@ -27,6 +28,7 @@ import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
 function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
   broadcastGameState(io, engine);
   pushChasseurPrompts(io, engine);
+  pushChefSuccessionPrompt(io, engine);
   if (engine.getPhase() === "NIGHT") {
     pushNightPrompts(io, engine);
     pushWolfRoomState(io, engine);
@@ -308,6 +310,20 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const shooterId = payload.playerId ?? socket.data.playerId!;
         engine.submitChasseurShot(shooterId, payload.targetId);
+        sync(io, engine);
+        if (engine.getPhase() === "ENDED") {
+          io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
+            stats: engine.getEndGameStats(),
+          });
+        }
+      }, ack);
+    });
+
+    socket.on(SOCKET_EVENTS.CHEF_SUCCESSION_CHOOSE, (payload: ChefSuccessionChoosePayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const deadChefId = socket.data.playerId!;
+        engine.chooseChefSuccessor(deadChefId, payload.successorId);
         sync(io, engine);
         if (engine.getPhase() === "ENDED") {
           io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {

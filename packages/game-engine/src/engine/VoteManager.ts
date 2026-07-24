@@ -26,6 +26,22 @@ function chefVoteWeight(ctx: EngineContext, voterId: string): number {
   return voter.isChef && bonusActive ? 2 : 1;
 }
 
+/**
+ * Live, weighted tally of the CURRENT round's votes (targetId -> total
+ * weight), reflecting the Chef's double-vote bonus exactly like the real
+ * tally does. Deliberately excludes the secret Corbeau bonus (only applied
+ * at final tally time) so the live view never tips off that a mark was
+ * placed. Used to drive the public live-vote display — never touches game
+ * state, safe to call at any time during DAY_VOTE.
+ */
+export function computeLiveVoteTally(ctx: EngineContext): Record<string, number> {
+  const tally: Record<string, number> = {};
+  for (const [voterId, targetId] of ctx.state.dayVote.votes.entries()) {
+    tally[targetId] = (tally[targetId] ?? 0) + chefVoteWeight(ctx, voterId);
+  }
+  return tally;
+}
+
 export function castDayVote(ctx: EngineContext, voterId: string, targetId: string): void {
   const voter = ctx.getPlayer(voterId);
   if (!voter.isAlive) throw new Error("Un joueur mort ne peut pas voter.");

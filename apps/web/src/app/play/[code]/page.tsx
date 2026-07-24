@@ -32,6 +32,7 @@ export default function PlayPage() {
   const [role, setRole] = useState<RoleId | null>(null);
   const [prompt, setPrompt] = useState<NightPromptPayload | null>(null);
   const [chasseurTargets, setChasseurTargets] = useState<string[] | null>(null);
+  const [chefSuccessionTargets, setChefSuccessionTargets] = useState<string[] | null>(null);
   const [wolfRoom, setWolfRoom] = useState<WolfRoomStatePayload | null>(null);
   const [wolfMessages, setWolfMessages] = useState<WolfChatMessagePayload[]>([]);
   const [notifications, setNotifications] = useState<NotificationPayload[]>([]);
@@ -84,6 +85,9 @@ export default function PlayPage() {
     socket.on(SOCKET_EVENTS.CHASSEUR_PROMPT, (payload: { eligibleTargetIds: string[] }) =>
       setChasseurTargets(payload.eligibleTargetIds),
     );
+    socket.on(SOCKET_EVENTS.CHEF_SUCCESSION_PROMPT, (payload: { eligibleSuccessorIds: string[] }) =>
+      setChefSuccessionTargets(payload.eligibleSuccessorIds),
+    );
     socket.on(SOCKET_EVENTS.WOLF_ROOM_STATE, (payload: WolfRoomStatePayload) => setWolfRoom(payload));
     socket.on(SOCKET_EVENTS.WOLF_CHAT_MESSAGE, (payload: WolfChatMessagePayload) =>
       setWolfMessages((prev) => [...prev, payload]),
@@ -99,6 +103,7 @@ export default function PlayPage() {
       socket.off(SOCKET_EVENTS.ROLE_ASSIGNED);
       socket.off(SOCKET_EVENTS.NIGHT_PROMPT);
       socket.off(SOCKET_EVENTS.CHASSEUR_PROMPT);
+      socket.off(SOCKET_EVENTS.CHEF_SUCCESSION_PROMPT);
       socket.off(SOCKET_EVENTS.WOLF_ROOM_STATE);
       socket.off(SOCKET_EVENTS.WOLF_CHAT_MESSAGE);
       socket.off(SOCKET_EVENTS.NOTIFICATION);
@@ -164,10 +169,12 @@ export default function PlayPage() {
           role={role}
           prompt={prompt}
           chasseurTargets={chasseurTargets}
+          chefSuccessionTargets={chefSuccessionTargets}
           wolfRoom={wolfRoom}
           wolfMessages={wolfMessages}
           onClearPrompt={() => setPrompt(null)}
           onClearChasseur={() => setChasseurTargets(null)}
+          onClearChefSuccession={() => setChefSuccessionTargets(null)}
         />
       )}
     </main>
@@ -180,20 +187,24 @@ function PhaseView({
   role,
   prompt,
   chasseurTargets,
+  chefSuccessionTargets,
   wolfRoom,
   wolfMessages,
   onClearPrompt,
   onClearChasseur,
+  onClearChefSuccession,
 }: {
   state: GameStatePublic;
   me: GameStatePublic["players"][number] | null;
   role: RoleId | null;
   prompt: NightPromptPayload | null;
   chasseurTargets: string[] | null;
+  chefSuccessionTargets: string[] | null;
   wolfRoom: WolfRoomStatePayload | null;
   wolfMessages: WolfChatMessagePayload[];
   onClearPrompt: () => void;
   onClearChasseur: () => void;
+  onClearChefSuccession: () => void;
 }) {
   // Reset whenever the phase changes (the parent remounts this component
   // with a `key={state.phase}`, but keeping this here too is cheap and
@@ -214,6 +225,28 @@ function PhaseView({
             const { emitWithAck } = await import("@/lib/socket");
             await emitWithAck(SOCKET_EVENTS.CHASSEUR_SHOOT, { targetId });
             onClearChasseur();
+          }}
+        />
+      </section>
+    );
+  }
+
+  if (chefSuccessionTargets) {
+    return (
+      <section className="card">
+        <h2 className="font-display text-lg text-gold-300 mb-3">👑 Vous étiez Chef du village</h2>
+        <p className="text-sm text-night-100/80 mb-3">
+          Avant de vous éteindre, désignez votre successeur à la tête du village.
+        </p>
+        <PlayerList
+          players={state.players.filter((p) => chefSuccessionTargets.includes(p.id))}
+          selectable
+          selectedId={selectedId}
+          onSelect={async (successorId) => {
+            setSelectedId(successorId);
+            const { emitWithAck } = await import("@/lib/socket");
+            await emitWithAck(SOCKET_EVENTS.CHEF_SUCCESSION_CHOOSE, { successorId });
+            onClearChefSuccession();
           }}
         />
       </section>
@@ -398,6 +431,7 @@ function PhaseView({
             candidates={votable}
             allPlayers={state.players}
             dayVotes={state.dayVotes}
+            dayVoteTally={state.dayVoteTally}
             myId={me?.id ?? null}
             interactive={Boolean(me?.isAlive)}
             onSelect={async (targetId) => {

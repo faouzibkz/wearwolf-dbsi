@@ -43,17 +43,23 @@ describe("Chasseur death trigger", () => {
     const ids: Record<string, string> = {};
     for (const n of names) ids[n] = engine.addPlayer(n).id;
     engine.startGame();
-    engine.volunteerForChef(ids.A!);
-    engine.forceStartChefDebate();
-    engine.advanceChefSpeaker();
-    for (const n of ["B", "C", "D", "E"]) engine.castChefVote(ids[n]!, ids.A!);
-    engine.tallyChefVoteAndProceed();
-    engine.endDay1Discussion();
-
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
     const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
     const chasseur = names.find((n) => roles.get(ids[n]!) === "CHASSEUR")!;
-    const bystander = names.find((n) => n !== wolf && n !== chasseur)!;
+    const others = names.filter((n) => n !== wolf && n !== chasseur);
+    const chief = others[0]!;
+    const bystander = others[1]!;
+
+    // Elect someone who is neither the Chasseur nor the shot's target as
+    // Chef: this test is about the Chasseur's own death-triggered shot
+    // blocking, and must stay isolated from the separate Chef succession
+    // flow, which would ALSO block progression if the elected Chef died.
+    engine.volunteerForChef(ids[chief]!);
+    engine.forceStartChefDebate();
+    engine.advanceChefSpeaker();
+    for (const n of names) if (n !== chief) engine.castChefVote(ids[n]!, ids[chief]!);
+    engine.tallyChefVoteAndProceed();
+    engine.endDay1Discussion();
 
     engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[chasseur]!);
     const result = engine.resolveNightAndProceed();

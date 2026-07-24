@@ -100,6 +100,13 @@ export interface GameInternalState {
   mowgliTransformedAnnounced: boolean;
   pendingMowgliReveal: boolean;
   pendingChasseurShooterIds: string[];
+  /**
+   * Set the moment the elected Chef du village dies (any cause). Phase
+   * progression is blocked (same pattern as pendingChasseurShooterIds)
+   * until the now-dead ex-Chef designates a successor via
+   * GameEngine.chooseChefSuccessor(). Null when no succession is pending.
+   */
+  pendingChefSuccessionDeadChefId: string | null;
   pendingTieResolutionRule: TieResolutionRule | null;
   rolesRevealedToPlayers: boolean;
   createdAt: number;

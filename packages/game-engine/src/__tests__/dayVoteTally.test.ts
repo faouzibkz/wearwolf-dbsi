@@ -77,3 +77,46 @@ describe("day vote is a live, open ballot", () => {
     expect(engine.getPublicState().dayVotes).not.toEqual({});
   });
 });
+
+describe("Chef's vote weight in the live tally", () => {
+  it("counts the Chef's vote as 2 while the bonus is active (alive count > threshold)", () => {
+    // 7 players, default chefVoteBonusThreshold is 6 -> bonus active (7 > 6).
+    const names = ["Chef", "B", "C", "D", "E", "F", "G"];
+    const { engine, ids } = bootToDayVote(names, 3);
+
+    engine.castDayVote(ids.Chef!, ids.C!);
+    expect(engine.getPublicState().dayVoteTally).toEqual({ [ids.C!]: 2 });
+    // Raw voter list still shows just the one voter — the "2" is weight,
+    // not a phantom second voter.
+    expect(engine.getPublicState().dayVotes).toEqual({ [ids.Chef!]: ids.C! });
+
+    engine.castDayVote(ids.B!, ids.C!);
+    expect(engine.getPublicState().dayVoteTally).toEqual({ [ids.C!]: 3 }); // 2 (Chef) + 1 (B)
+  });
+
+  it("drops the Chef's vote back to weight 1 once alive count falls to the threshold", () => {
+    const names = ["Chef", "B", "C", "D", "E", "F", "G"];
+    const { engine, ids } = bootToDayVote(names, 3);
+    const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
+    const wolfId = [...roles.entries()].find(([, r]) => r === "LOUP_GAROU")![0];
+    // Eliminate someone who isn't the Chef or the wolf, so the game keeps
+    // going and alive count simply drops from 7 to 6 (== threshold, bonus
+    // requires strictly > threshold so it should now be inactive).
+    const targetId = names.map((n) => ids[n]!).find((id) => id !== ids.Chef && id !== wolfId)!;
+
+    for (const n of names) {
+      const voterId = ids[n]!;
+      if (voterId !== targetId) engine.castDayVote(voterId, targetId);
+    }
+    const outcome = engine.tallyDayVoteAndProceed();
+    expect(outcome.eliminatedId).toBe(targetId);
+
+    engine.resolveNightAndProceed();
+    engine.proceedFromMorningToDay();
+    engine.endDayDiscussion();
+
+    const nextTargetId = names.map((n) => ids[n]!).find((id) => id !== ids.Chef && id !== targetId)!;
+    engine.castDayVote(ids.Chef!, nextTargetId);
+    expect(engine.getPublicState().dayVoteTally).toEqual({ [nextTargetId]: 1 });
+  });
+});

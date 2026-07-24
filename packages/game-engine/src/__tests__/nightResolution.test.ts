@@ -66,7 +66,10 @@ describe("night resolution", () => {
     const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1 });
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
     const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
-    const victim = names.find((n) => n !== wolf)!;
+    // Exclude names[0]: bootToNight1 always elects them Chef, and a dead
+    // Chef triggers the (unrelated) succession flow tested elsewhere,
+    // which would block this test's MORNING transition.
+    const victim = names.find((n) => n !== wolf && n !== names[0])!;
     engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[victim]!);
     engine.resolveNightAndProceed();
 
