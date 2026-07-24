@@ -109,7 +109,22 @@ function ControlBar({ admin }: { admin: AdminStatePayload }) {
     }
   }
 
-  if (admin.state.phase === "LOBBY") return null;
+  const soundButton = (
+    <button
+      key="sound"
+      className="btn-secondary"
+      disabled={busy}
+      onClick={() => act(SOCKET_EVENTS.ADMIN_SET_SOUND_EFFECTS, { enabled: !admin.state.soundEffectsEnabled })}
+    >
+      {admin.state.soundEffectsEnabled ? "🔊 Sons activés" : "🔇 Sons coupés"}
+    </button>
+  );
+
+  // Sound is togglable anytime, including from the lobby before the game
+  // even starts — everything else here only makes sense once it has.
+  if (admin.state.phase === "LOBBY") {
+    return <div className="flex flex-wrap gap-2">{soundButton}</div>;
+  }
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -129,6 +144,7 @@ function ControlBar({ admin }: { admin: AdminStatePayload }) {
       <button className="btn-secondary" disabled={busy} onClick={() => act(SOCKET_EVENTS.ADMIN_REVEAL_ROLES)}>
         👁 Révéler les rôles
       </button>
+      {soundButton}
       <button
         className="btn-primary"
         disabled={busy}
@@ -219,6 +235,15 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
             onChange={(e) => setConfig((c) => ({ ...c, autoProgress: e.target.checked }))}
           />
           Progression automatique (sinon, contrôle manuel des phases)
+        </label>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={config.soundEffectsEnabled}
+            onChange={(e) => setConfig((c) => ({ ...c, soundEffectsEnabled: e.target.checked }))}
+          />
+          Effets sonores (loup-garou, coq, cloche…) — togglable aussi en cours de partie ci-dessus
         </label>
 
         <div className="flex gap-2 pt-2">

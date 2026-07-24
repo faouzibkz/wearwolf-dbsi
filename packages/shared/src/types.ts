@@ -95,6 +95,13 @@ export interface GameConfig {
   chefVoteBonusThreshold: number;
   /** progression between phases: admin clicks "next" vs automatic on timer expiry */
   autoProgress: boolean;
+  /**
+   * Global on/off switch for ambient sound cues (night howl, morning
+   * rooster, death bell, victory fanfare), applied to every player at
+   * once. Unlike the rest of GameConfig this can be toggled anytime, not
+   * just from the LOBBY — see GameEngine.setSoundEffectsEnabled().
+   */
+  soundEffectsEnabled: boolean;
   /** display name for the game / preset name */
   name: string;
 }
@@ -116,6 +123,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   tieResolutionRule: "REPEAT_DEFENSE",
   chefVoteBonusThreshold: 6,
   autoProgress: false,
+  soundEffectsEnabled: true,
   name: "Partie sans nom",
 };
 
@@ -284,6 +292,8 @@ export interface GameStatePublic {
    * Chef's vote will visually undercount.
    */
   dayVoteTally: Record<string, number>;
+  /** Mirrors GameConfig.soundEffectsEnabled — the single source of truth every client checks before playing any cue. */
+  soundEffectsEnabled: boolean;
 }
 
 export interface EndGameStats {

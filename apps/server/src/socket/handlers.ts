@@ -5,6 +5,7 @@ import {
   type AdminAuthPayload,
   type AdminCreateGamePayload,
   type AdminResolveTiePayload,
+  type AdminSetSoundEffectsPayload,
   type AdminUpdateConfigPayload,
   type ChasseurShootPayload,
   type ChefSuccessionChoosePayload,
@@ -123,6 +124,16 @@ export function registerSocketHandlers(io: Server): void {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.updateConfig(payload.config);
+        sync(io, engine);
+      }, ack);
+    });
+
+    // Deliberately separate from ADMIN_UPDATE_CONFIG: sound is cosmetic and
+    // togglable anytime, including mid-game, unlike role counts/timers/etc.
+    socket.on(SOCKET_EVENTS.ADMIN_SET_SOUND_EFFECTS, (payload: AdminSetSoundEffectsPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireAdminGame(socket);
+        engine.setSoundEffectsEnabled(payload.enabled);
         sync(io, engine);
       }, ack);
     });

@@ -13,17 +13,25 @@ This is a working **first milestone**: the full game loop (lobby → Chef electi
 cycles → all 9 roles → tie handling → victory → end-game reveal) runs end-to-end and is covered by
 unit tests + a live Socket.IO smoke test. Deliberately **not yet built** (next milestones):
 
-- WebRTC voice for the wolves' private room (text chat for wolves **is** implemented and working —
-  see `apps/server/src/socket/wolfRoom.ts` — voice is layered on top of the same room concept later)
-- Full animated day/night transitions, sound effects (howl/rooster/bell), role encyclopedia screen
+- Full animated day/night transitions, role encyclopedia screen
 - Saved-preset UI wiring (the backend — `Preset` table, `admin:savePreset` / `admin:listPresets` —
   already exists; the admin screen just doesn't have the load/save buttons yet)
 - Integration test suite beyond the manual smoke script (`apps/server/smoke.mjs` was used during
   development; a proper `vitest` integration suite using `socket.io-client` is the natural next step)
 
-Everything else in the spec — including per-role night logic, the Chef vote bonus/threshold, the
-Corbeau vote bonus, Mowgli's hidden transformation, the Chasseur's death-triggered shot, tie
-resolution (all 5 configurable rules), reconnection, and the admin dashboard — is implemented.
+Voice for the wolves' private room is intentionally **out of scope** — you're using Discord for
+that instead of WebRTC, so the room only carries text chat (`apps/server/src/socket/wolfRoom.ts`).
+
+Sound effects (night howl, morning rooster, death bell, victory fanfare) **are** implemented —
+synthesized client-side via the Web Audio API (`apps/web/src/lib/soundEffects.ts`), no audio files
+to host. They're gated by a single global `soundEffectsEnabled` flag the admin controls from the
+dashboard (togglable anytime, including mid-game, unlike the rest of `GameConfig` which locks after
+the game starts) — one toggle mutes or unmutes every player at once.
+
+Everything else in the spec — including per-role night logic, the Chef vote bonus/threshold, Chef
+succession on death, the Corbeau vote bonus, Mowgli's hidden transformation, the Chasseur's
+death-triggered shot, tie resolution (all 5 configurable rules), reconnection, and the admin
+dashboard — is implemented.
 
 ## Architecture
 

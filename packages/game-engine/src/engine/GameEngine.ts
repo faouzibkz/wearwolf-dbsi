@@ -174,6 +174,16 @@ export class GameEngine {
     this.state.config = { ...this.state.config, ...partial };
   }
 
+  /**
+   * Unlike updateConfig, this is deliberately NOT phase-gated: sound is a
+   * cosmetic, whole-game/whole-players preference the admin should be able
+   * to flip on or off at any point, including mid-game.
+   */
+  setSoundEffectsEnabled(enabled: boolean): void {
+    this.state.config.soundEffectsEnabled = enabled;
+    this.appendLog(`Effets sonores ${enabled ? "activés" : "désactivés"} par le Maître du Jeu.`);
+  }
+
   // -------------------------------------------------------------------
   // Game start / role assignment
   // -------------------------------------------------------------------
@@ -525,6 +535,7 @@ export class GameEngine {
       // the next elimination.
       dayVotes: this.state.phase === "DAY_VOTE" ? Object.fromEntries(this.state.dayVote.votes) : {},
       dayVoteTally: this.state.phase === "DAY_VOTE" ? VoteManager.computeLiveVoteTally(this.ctx()) : {},
+      soundEffectsEnabled: this.state.config.soundEffectsEnabled,
     };
   }
 

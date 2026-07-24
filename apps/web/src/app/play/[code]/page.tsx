@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ROLE_METADATA,
   SOCKET_EVENTS,
+  type EndGameStats,
   type GameStatePublic,
   type NightPromptPayload,
   type NotificationPayload,
@@ -14,6 +15,7 @@ import {
 } from "@loupgarou/shared";
 import { emitWithAck, getSocket } from "@/lib/socket";
 import { loadPlayerSession, type PlayerSession } from "@/lib/session";
+import { playDeathBell, playMorningRooster, playNightHowl, playVictoryFanfare } from "@/lib/soundEffects";
 import { RoleCard } from "@/components/RoleCard";
 import { PlayerList } from "@/components/PlayerList";
 import { CountdownTimer } from "@/components/CountdownTimer";
@@ -39,6 +41,8 @@ export default function PlayPage() {
   const [endStats, setEndStats] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
   const announcedDeathsRef = useRef<string>("");
+  const soundEnabledRef = useRef<boolean>(true);
+  const prevPhaseRef = useRef<GameStatePublic["phase"] | null>(null);
 
   useEffect(() => {
     const stored = loadPlayerSession(code);
@@ -67,10 +71,18 @@ export default function PlayPage() {
     socket.on(SOCKET_EVENTS.GAME_STATE, (s: GameStatePublic) => {
       setState(s);
       if (s.phase !== "NIGHT") setPrompt(null);
+      soundEnabledRef.current = s.soundEffectsEnabled;
+
+      if (s.phase !== prevPhaseRef.current) {
+        if (s.phase === "NIGHT") playNightHowl(soundEnabledRef.current);
+        else if (s.phase === "MORNING") playMorningRooster(soundEnabledRef.current);
+        prevPhaseRef.current = s.phase;
+      }
 
       const signature = s.lastDeaths.map((d) => d.playerId).sort().join(",");
       if (signature && signature !== announcedDeathsRef.current) {
         announcedDeathsRef.current = signature;
+        playDeathBell(soundEnabledRef.current);
         const deathNotifications: NotificationPayload[] = s.lastDeaths.map((d) => ({
           type: "INFO",
           message: `☠️ ${d.nickname} est mort(e) — il/elle était ${ROLE_METADATA[d.roleId].displayName}.`,
@@ -95,7 +107,10 @@ export default function PlayPage() {
     socket.on(SOCKET_EVENTS.NOTIFICATION, (payload: NotificationPayload) =>
       setNotifications((prev) => [...prev.slice(-4), payload]),
     );
-    socket.on(SOCKET_EVENTS.GAME_ENDED, (payload: { stats: unknown }) => setEndStats(payload.stats));
+    socket.on(SOCKET_EVENTS.GAME_ENDED, (payload: { stats: EndGameStats }) => {
+      setEndStats(payload.stats);
+      playVictoryFanfare(soundEnabledRef.current, payload.stats.winner);
+    });
 
     return () => {
       socket.off("connect", reconnect);

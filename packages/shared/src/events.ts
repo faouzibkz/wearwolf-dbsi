@@ -34,6 +34,7 @@ export const SOCKET_EVENTS = {
   ADMIN_RESOLVE_TIE: "admin:resolveTie",
   ADMIN_SAVE_PRESET: "admin:savePreset",
   ADMIN_LIST_PRESETS: "admin:listPresets",
+  ADMIN_SET_SOUND_EFFECTS: "admin:setSoundEffects", // togglable anytime, unlike the rest of GameConfig
 
   // --- admin: read models ---
   ADMIN_STATE: "admin:state", // full state incl. every role + logs
@@ -109,6 +110,10 @@ export interface AdminCreateGamePayload {
 
 export interface AdminUpdateConfigPayload {
   config: Partial<GameConfig>;
+}
+
+export interface AdminSetSoundEffectsPayload {
+  enabled: boolean;
 }
 
 export interface ErrorPayload {
