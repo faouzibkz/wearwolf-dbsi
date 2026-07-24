@@ -35,6 +35,7 @@ export function processDeaths(ctx: EngineContext, deaths: DeathRequest[]): strin
     player.isAlive = false;
     player.deathCause = next.cause;
     actuallyDied.push(player.id);
+    ctx.state.lastDeathPlayerIds.push(player.id);
     ctx.log(`${player.nickname} est mort — ${CAUSE_LABELS[next.cause] ?? next.cause}.`);
 
     const role = ROLE_REGISTRY[player.roleId];

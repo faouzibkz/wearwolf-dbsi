@@ -219,6 +219,24 @@ export interface PlayerPublic {
   isChef: boolean;
   isConnected: boolean;
   isSpectator: boolean;
+  /**
+   * A dead player's role becomes public knowledge (standard Loup-Garou
+   * rule) — this is only ever set once `isAlive` is false. Living players'
+   * roles never appear here or anywhere else in the public state.
+   */
+  revealedRoleId?: RoleId;
+}
+
+/**
+ * Announces who just died and their role, WITHOUT revealing the mechanism
+ * (no cause/attacker/protector info) — that stays admin-only. Populated
+ * fresh on every night resolution, day-vote elimination, and Chasseur
+ * shot; empty when nobody died.
+ */
+export interface RevealedDeath {
+  playerId: string;
+  nickname: string;
+  roleId: RoleId;
 }
 
 /** Only ever sent to the admin, or to a player about themself. */
@@ -247,6 +265,8 @@ export interface GameStatePublic {
   phaseEndsAt: number | null; // epoch ms, null if no active timer
   tiedPlayerIds: string[];
   lastMorningAnnouncement: "DEATH" | "NO_DEATH" | null;
+  /** Who died in the most recently resolved event (night / day vote / Chasseur shot), with role. */
+  lastDeaths: RevealedDeath[];
   mowgliTransformedAnnounced: boolean;
   winner: Team | null;
 }

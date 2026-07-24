@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
+  ROLE_METADATA,
   SOCKET_EVENTS,
   type GameStatePublic,
   type NightPromptPayload,
@@ -35,6 +36,7 @@ export default function PlayPage() {
   const [notifications, setNotifications] = useState<NotificationPayload[]>([]);
   const [endStats, setEndStats] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
+  const announcedDeathsRef = useRef<string>("");
 
   useEffect(() => {
     const stored = loadPlayerSession(code);
@@ -63,6 +65,18 @@ export default function PlayPage() {
     socket.on(SOCKET_EVENTS.GAME_STATE, (s: GameStatePublic) => {
       setState(s);
       if (s.phase !== "NIGHT") setPrompt(null);
+
+      const signature = s.lastDeaths.map((d) => d.playerId).sort().join(",");
+      if (signature && signature !== announcedDeathsRef.current) {
+        announcedDeathsRef.current = signature;
+        const deathNotifications: NotificationPayload[] = s.lastDeaths.map((d) => ({
+          type: "INFO",
+          message: `☠️ ${d.nickname} est mort(e) — il/elle était ${ROLE_METADATA[d.roleId].displayName}.`,
+        }));
+        setNotifications((prev) => [...prev.slice(-4), ...deathNotifications]);
+      } else if (!signature) {
+        announcedDeathsRef.current = "";
+      }
     });
     socket.on(SOCKET_EVENTS.ROLE_ASSIGNED, (payload: { roleId: RoleId }) => setRole(payload.roleId));
     socket.on(SOCKET_EVENTS.NIGHT_PROMPT, (payload: NightPromptPayload) => setPrompt(payload));
@@ -336,13 +350,23 @@ function PhaseView({
 
     case "MORNING":
       return (
-        <section className="card text-center py-10 animate-fade-in">
-          <p className="text-4xl mb-3">{state.lastMorningAnnouncement === "DEATH" ? "🔔" : "🐓"}</p>
+        <section className="card text-center py-10 animate-fade-in space-y-4">
+          <p className="text-4xl">{state.lastMorningAnnouncement === "DEATH" ? "🔔" : "🐓"}</p>
           <p className="font-display text-xl text-gold-300">
             {state.lastMorningAnnouncement === "DEATH"
               ? "Quelqu'un est mort cette nuit."
               : "Personne n'est mort cette nuit."}
           </p>
+          {state.lastDeaths.length > 0 && (
+            <ul className="space-y-2">
+              {state.lastDeaths.map((d) => (
+                <li key={d.playerId} className="text-sm text-night-100/90">
+                  <strong className="text-blood-300">{d.nickname}</strong> était{" "}
+                  <span className="text-gold-300">{ROLE_METADATA[d.roleId].displayName}</span>.
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       );
 

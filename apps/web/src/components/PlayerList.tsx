@@ -1,6 +1,6 @@
 "use client";
 
-import type { PlayerPublic } from "@loupgarou/shared";
+import { ROLE_METADATA, type PlayerPublic } from "@loupgarou/shared";
 
 export function PlayerList({
   players,
@@ -28,13 +28,20 @@ export function PlayerList({
             onClick={() => clickable && onSelect?.(p.id)}
             className={[
               "rounded-lg border px-3 py-2 text-sm flex items-center justify-between gap-2 transition",
-              p.isAlive ? "border-night-600 bg-night-800/70" : "border-night-700 bg-night-900/40 opacity-50 line-through",
+              p.isAlive ? "border-night-600 bg-night-800/70" : "border-night-700 bg-night-900/40 opacity-60",
               highlightId === p.id ? "ring-2 ring-gold-400" : "",
               selectedId === p.id ? "border-blood-400 bg-blood-500/20" : "",
               clickable ? "cursor-pointer hover:border-gold-400/60" : "",
             ].join(" ")}
           >
-            <span className="truncate">{p.nickname}</span>
+            <span className="flex flex-col min-w-0">
+              <span className={`truncate ${!p.isAlive ? "line-through" : ""}`}>{p.nickname}</span>
+              {p.revealedRoleId && (
+                <span className="text-xs text-blood-300 truncate">
+                  💀 {ROLE_METADATA[p.revealedRoleId].displayName}
+                </span>
+              )}
+            </span>
             <span className="flex items-center gap-1 shrink-0">
               {p.isChef && <span title="Chef du village">👑</span>}
               {!p.isConnected && p.isAlive && <span className="text-xs text-night-600" title="Déconnecté">⚡</span>}

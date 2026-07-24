@@ -82,6 +82,14 @@ export interface GameInternalState {
   phaseEndsAt: number | null;
   winner: Team | null;
   lastMorningResult: "DEATH" | "NO_DEATH" | null;
+  /**
+   * playerIds who died in the current in-progress resolution unit (a night
+   * resolution, a day-vote elimination, or a manual tie resolution) —
+   * including any chained Chasseur shot. Reset at the start of each unit
+   * by GameEngine, appended to by DeathQueue.processDeaths. Sanitized to
+   * `RevealedDeath[]` (name + role, no cause) in getPublicState().
+   */
+  lastDeathPlayerIds: string[];
   mowgliTransformedAnnounced: boolean;
   pendingMowgliReveal: boolean;
   pendingChasseurShooterIds: string[];

@@ -64,6 +64,7 @@ export class GameEngine {
       lastMorningResult: null,
       mowgliTransformedAnnounced: false,
       pendingMowgliReveal: false,
+      lastDeathPlayerIds: [],
       pendingChasseurShooterIds: [],
       pendingTieResolutionRule: null,
       rolesRevealedToPlayers: false,
@@ -286,6 +287,7 @@ export class GameEngine {
   resolveNightAndProceed(): { anyoneDied: boolean; blocked: boolean; mowgliTransformed: boolean } {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
     this.snapshot();
+    this.state.lastDeathPlayerIds = [];
     const { anyoneDied } = NightResolver.resolveNight(this.ctx(), this.state.nightNumber);
 
     if (this.state.pendingChasseurShooterIds.length > 0) {
@@ -348,6 +350,7 @@ export class GameEngine {
   tallyDayVoteAndProceed(): VoteManager.DayVoteOutcome {
     if (this.state.phase !== "DAY_VOTE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
+    this.state.lastDeathPlayerIds = [];
     const outcome = VoteManager.tallyDayVote(this.ctx(), this.rng);
 
     if (outcome.awaitingAnotherRound) {
@@ -374,6 +377,7 @@ export class GameEngine {
   resolveTieManually(targetId: string | null): VoteManager.DayVoteOutcome {
     if (this.state.phase !== "TIE_REVOTE") throw new Error("Aucune égalité à résoudre.");
     this.snapshot();
+    this.state.lastDeathPlayerIds = [];
     const outcome = VoteManager.resolveTieManually(this.ctx(), targetId);
     this.finishEliminationAndProceed();
     return outcome;
@@ -436,7 +440,14 @@ export class GameEngine {
         isChef: p.isChef,
         isConnected: p.isConnected,
         isSpectator: p.isSpectator,
+        // A dead player's role is public knowledge; a living one's never is.
+        revealedRoleId: p.isAlive ? undefined : p.roleId,
       }));
+
+    const lastDeaths: GameStatePublic["lastDeaths"] = this.state.lastDeathPlayerIds
+      .map((id) => this.state.players.get(id))
+      .filter((p): p is InternalPlayer => Boolean(p))
+      .map((p) => ({ playerId: p.id, nickname: p.nickname, roleId: p.roleId }));
 
     return {
       code: this.state.code,
@@ -451,6 +462,7 @@ export class GameEngine {
       phaseEndsAt: this.state.phaseEndsAt,
       tiedPlayerIds: this.state.dayVote.tiedIds,
       lastMorningAnnouncement: this.state.lastMorningResult,
+      lastDeaths,
       mowgliTransformedAnnounced: this.state.mowgliTransformedAnnounced,
       winner: this.state.winner,
     };
