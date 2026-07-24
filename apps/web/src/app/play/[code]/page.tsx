@@ -143,6 +143,7 @@ export default function PlayPage() {
         <EndGamePanel stats={endStats} />
       ) : (
         <PhaseView
+          key={state.phase}
           state={state}
           me={me ?? null}
           role={role}
@@ -179,6 +180,11 @@ function PhaseView({
   onClearPrompt: () => void;
   onClearChasseur: () => void;
 }) {
+  // Reset whenever the phase changes (the parent remounts this component
+  // with a `key={state.phase}`, but keeping this here too is cheap and
+  // makes the intent obvious).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
   if (chasseurTargets) {
     return (
       <section className="card">
@@ -187,7 +193,9 @@ function PhaseView({
         <PlayerList
           players={state.players.filter((p) => chasseurTargets.includes(p.id))}
           selectable
+          selectedId={selectedId}
           onSelect={async (targetId) => {
+            setSelectedId(targetId);
             const { emitWithAck } = await import("@/lib/socket");
             await emitWithAck(SOCKET_EVENTS.CHASSEUR_SHOOT, { targetId });
             onClearChasseur();
@@ -268,14 +276,25 @@ function PhaseView({
           {iAmCandidate ? (
             <p className="text-sm text-night-100/70">Les candidats ne votent pas.</p>
           ) : (
-            <PlayerList
-              players={state.players.filter((p) => state.candidates.includes(p.id))}
-              selectable
-              onSelect={async (candidateId) => {
-                const { emitWithAck } = await import("@/lib/socket");
-                await emitWithAck(SOCKET_EVENTS.CHEF_VOTE_CAST, { candidateId });
-              }}
-            />
+            <>
+              <PlayerList
+                players={state.players.filter((p) => state.candidates.includes(p.id))}
+                selectable
+                selectedId={selectedId}
+                onSelect={async (candidateId) => {
+                  setSelectedId(candidateId);
+                  const { emitWithAck } = await import("@/lib/socket");
+                  await emitWithAck(SOCKET_EVENTS.CHEF_VOTE_CAST, { candidateId });
+                }}
+              />
+              {selectedId && (
+                <p className="text-xs text-gold-300/80 text-center">
+                  Vous votez pour{" "}
+                  <strong>{state.players.find((p) => p.id === selectedId)?.nickname}</strong>. Cliquez sur
+                  un autre joueur pour changer.
+                </p>
+              )}
+            </>
           )}
         </section>
       );
@@ -347,14 +366,25 @@ function PhaseView({
         <section className="card space-y-3">
           <h2 className="font-display text-lg text-gold-300">🗳️ Vote du village</h2>
           {me?.isAlive ? (
-            <PlayerList
-              players={votable}
-              selectable
-              onSelect={async (targetId) => {
-                const { emitWithAck } = await import("@/lib/socket");
-                await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
-              }}
-            />
+            <>
+              <PlayerList
+                players={votable}
+                selectable
+                selectedId={selectedId}
+                onSelect={async (targetId) => {
+                  setSelectedId(targetId);
+                  const { emitWithAck } = await import("@/lib/socket");
+                  await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
+                }}
+              />
+              {selectedId && (
+                <p className="text-xs text-gold-300/80 text-center">
+                  Vous votez pour{" "}
+                  <strong>{state.players.find((p) => p.id === selectedId)?.nickname}</strong>. Cliquez sur
+                  un autre joueur pour changer.
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-sm text-night-100/60">Vous êtes spectateur(trice).</p>
           )}

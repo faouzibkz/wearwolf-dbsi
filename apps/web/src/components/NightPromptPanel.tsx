@@ -25,14 +25,17 @@ export function NightPromptPanel({
   onSubmit: (actionType: string, targetId?: string) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
+  const [sentChoice, setSentChoice] = useState<{ label: string } | null>(null);
   const eligible = players.filter((p) => prompt.eligibleTargetIds.includes(p.id));
 
-  if (sent) {
+  if (sentChoice) {
     return (
       <div className="text-center py-8 text-night-100/70 animate-fade-in">
         <p className="font-display text-lg text-gold-300 mb-2">Action envoyée.</p>
-        <p className="text-sm">En attente de la résolution de la nuit…</p>
+        <p className="text-sm">
+          Votre choix : <strong className="text-blood-300">{sentChoice.label}</strong>
+        </p>
+        <p className="text-sm mt-1">En attente de la résolution de la nuit…</p>
       </div>
     );
   }
@@ -57,7 +60,7 @@ export function NightPromptPanel({
               className="btn-primary"
               onClick={() => {
                 onSubmit("HEAL");
-                setSent(true);
+                setSentChoice({ label: `Potion de guérison sur ${attacked?.nickname ?? "la victime"}` });
               }}
             >
               🧪 Utiliser la potion de guérison
@@ -68,7 +71,8 @@ export function NightPromptPanel({
               players={eligible}
               onPick={(id) => {
                 onSubmit("POISON", id);
-                setSent(true);
+                const target = eligible.find((p) => p.id === id);
+                setSentChoice({ label: `Potion de poison sur ${target?.nickname ?? "?"}` });
               }}
             />
           )}
@@ -76,7 +80,7 @@ export function NightPromptPanel({
             className="btn-secondary"
             onClick={() => {
               onSubmit("SKIP");
-              setSent(true);
+              setSentChoice({ label: "Aucune action" });
             }}
           >
             Ne rien faire
@@ -97,17 +101,18 @@ export function NightPromptPanel({
           onClick={() => {
             if (!selected) return;
             onSubmit(prompt.actionType, selected);
-            setSent(true);
+            const target = eligible.find((p) => p.id === selected);
+            setSentChoice({ label: target?.nickname ?? "?" });
           }}
         >
-          Confirmer
+          Confirmer{selected ? ` : ${eligible.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
         </button>
         {prompt.actionType === "DEVOUR_WOLF" && (
           <button
             className="btn-secondary"
             onClick={() => {
               onSubmit("SKIP");
-              setSent(true);
+              setSentChoice({ label: "Aucune action" });
             }}
           >
             Passer

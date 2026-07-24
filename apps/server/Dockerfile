@@ -2,6 +2,15 @@
 FROM node:20-bookworm-slim AS base
 WORKDIR /app
 
+# Prisma's query engine AND schema engine (used by `prisma generate` /
+# `prisma db push` / `prisma migrate`) both dynamically link against
+# OpenSSL. The bookworm-slim base doesn't ship it, which makes the schema
+# engine fail with an empty, undiagnosable "Schema engine error:" — this is
+# the fix Prisma's own warning points at.
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 # Copy only manifests first so `npm install` is cached unless a dependency changes.
 COPY package.json ./
 COPY packages/shared/package.json packages/shared/package.json
