@@ -3,10 +3,7 @@ import { GameEngine } from "../engine/GameEngine";
 import { seededRng } from "./helpers";
 
 function bootToNight1(names: string[], roleCounts: Record<string, number>, seed: number) {
-  const engine = GameEngine.createGame(
-    { roleCounts: roleCounts as any, loupBlancRule: { mode: "EVERY_NIGHT" } },
-    seededRng(seed),
-  );
+  const engine = GameEngine.createGame({ roleCounts: roleCounts as any }, seededRng(seed));
   const ids: Record<string, string> = {};
   for (const n of names) ids[n] = engine.addPlayer(n).id;
   engine.startGame();
@@ -19,7 +16,7 @@ function bootToNight1(names: string[], roleCounts: Record<string, number>, seed:
   return { engine, ids };
 }
 
-describe("Loup Blanc joins the pack's regular kill vote", () => {
+describe("Loup Blanc plays as a plain Loup-Garou (pack kill vote only, no special power)", () => {
   it("can vote to kill a villager alongside a living Loup-Garou", () => {
     const names = ["A", "B", "C", "D", "E", "F"];
     const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1, LOUP_BLANC: 1 }, 4);
@@ -52,14 +49,11 @@ describe("Loup Blanc joins the pack's regular kill vote", () => {
     expect(outcome.eliminatedId).toBe(ids[wolf]);
     expect(engine.getPhase()).toBe("NIGHT"); // game continues, Loup Blanc still alive
 
-    // Before the fix, the Loup Blanc got NO night prompt at all here (his
-    // only action was DEVOUR_WOLF, which requires a living fellow wolf) —
-    // he was completely unable to kill anyone.
     const prompts = engine.getNightPrompts();
     const myPrompt = prompts.find((p) => p.player.id === ids[loupBlanc]);
     expect(myPrompt).toBeDefined();
-    expect(myPrompt!.request.actionType).toBe("LOUP_BLANC_ACT");
-    expect((myPrompt!.request.context as any).killEligible).toContain(ids[villager]);
+    expect(myPrompt!.request.actionType).toBe("KILL_VOTE");
+    expect(myPrompt!.request.eligibleTargetIds).toContain(ids[villager]);
 
     engine.submitNightAction(ids[loupBlanc]!, "KILL_VOTE", ids[villager]!);
     const result = engine.resolveNightAndProceed();
@@ -68,17 +62,20 @@ describe("Loup Blanc joins the pack's regular kill vote", () => {
     expect(engine.getPublicState().players.find((p) => p.id === ids[villager])!.isAlive).toBe(false);
   });
 
-  it("can still secretly devour a fellow Loup-Garou on an active devour night", () => {
+  it("cannot target a fellow wolf (no devour power) or himself", () => {
     const names = ["A", "B", "C", "D", "E", "F"];
     const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1, LOUP_BLANC: 1 }, 4);
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
     const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
     const loupBlanc = names.find((n) => roles.get(ids[n]!) === "LOUP_BLANC")!;
 
-    engine.submitNightAction(ids[loupBlanc]!, "DEVOUR_WOLF", ids[wolf]!);
-    const result = engine.resolveNightAndProceed();
+    const prompts = engine.getNightPrompts();
+    const myPrompt = prompts.find((p) => p.player.id === ids[loupBlanc]);
+    expect(myPrompt!.request.eligibleTargetIds).not.toContain(ids[wolf]);
+    expect(myPrompt!.request.eligibleTargetIds).not.toContain(ids[loupBlanc]);
 
-    expect(result.anyoneDied).toBe(true);
-    expect(engine.getPublicState().players.find((p) => p.id === ids[wolf])!.isAlive).toBe(false);
+    // The regular Loup-Garou's own prompt can't target the Loup Blanc either.
+    const wolfPrompt = prompts.find((p) => p.player.id === ids[wolf]);
+    expect(wolfPrompt!.request.eligibleTargetIds).not.toContain(ids[loupBlanc]);
   });
 });

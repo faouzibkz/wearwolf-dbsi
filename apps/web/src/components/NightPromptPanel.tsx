@@ -90,49 +90,6 @@ export function NightPromptPanel({
     );
   }
 
-  if (prompt.actionType === "LOUP_BLANC_ACT") {
-    const ctx = prompt.context as { killEligible: string[]; devourEligible: string[] };
-    const killTargets = players.filter((p) => ctx.killEligible.includes(p.id));
-    const devourTargets = players.filter((p) => ctx.devourEligible.includes(p.id));
-    return (
-      <div className="space-y-4 animate-fade-in">
-        <p className="text-sm text-night-100/80">
-          Votez avec les autres loups pour désigner une victime cette nuit.
-        </p>
-        <PlayerList players={killTargets} selectable selectedId={selected} onSelect={setSelected} />
-        <button
-          className="btn-primary disabled:opacity-40"
-          disabled={!selected}
-          onClick={() => {
-            if (!selected) return;
-            onSubmit("KILL_VOTE", selected);
-            const target = killTargets.find((p) => p.id === selected);
-            setSentChoice({ label: target?.nickname ?? "?" });
-          }}
-        >
-          Confirmer{selected ? ` : ${killTargets.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
-        </button>
-        {devourTargets.length > 0 && (
-          <div className="pt-3 border-t border-night-700 space-y-2">
-            <p className="text-xs text-night-100/60">
-              Vous pouvez aussi dévorer secrètement un loup-garou cette nuit, à la place :
-            </p>
-            <ExpandablePicker
-              label="🐺 Dévorer un loup-garou"
-              players={devourTargets}
-              onPick={(id) => {
-                onSubmit("DEVOUR_WOLF", id);
-                const target = devourTargets.find((p) => p.id === id);
-                setSentChoice({ label: `Dévoré : ${target?.nickname ?? "?"}` });
-              }}
-            />
-          </div>
-        )}
-        <CountdownTimer endsAt={prompt.deadlineAt} />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4 animate-fade-in">
       <p className="text-sm text-night-100/80">{ACTION_LABELS[prompt.actionType] ?? "Choisissez une cible."}</p>
@@ -156,7 +113,7 @@ export function NightPromptPanel({
   );
 }
 
-/** Generic "click to reveal a target list" button, used for optional/secondary actions (poison potion, Loup Blanc's devour). */
+/** Generic "click to reveal a target list" button, used for optional/secondary actions (e.g. the Sorcière's poison potion). */
 function ExpandablePicker({
   label,
   players,
