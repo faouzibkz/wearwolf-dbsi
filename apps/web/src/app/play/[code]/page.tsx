@@ -18,6 +18,7 @@ import { RoleCard } from "@/components/RoleCard";
 import { PlayerList } from "@/components/PlayerList";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { NightPromptPanel } from "@/components/NightPromptPanel";
+import { LiveVoteList } from "@/components/LiveVoteList";
 import { WolfChat } from "@/components/WolfChat";
 import { EndGamePanel } from "@/components/EndGamePanel";
 
@@ -389,29 +390,21 @@ function PhaseView({
       return (
         <section className="card space-y-3">
           <h2 className="font-display text-lg text-gold-300">🗳️ Vote du village</h2>
-          {me?.isAlive ? (
-            <>
-              <PlayerList
-                players={votable}
-                selectable
-                selectedId={selectedId}
-                onSelect={async (targetId) => {
-                  setSelectedId(targetId);
-                  const { emitWithAck } = await import("@/lib/socket");
-                  await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
-                }}
-              />
-              {selectedId && (
-                <p className="text-xs text-gold-300/80 text-center">
-                  Vous votez pour{" "}
-                  <strong>{state.players.find((p) => p.id === selectedId)?.nickname}</strong>. Cliquez sur
-                  un autre joueur pour changer.
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-night-100/60">Vous êtes spectateur(trice).</p>
-          )}
+          <p className="text-xs text-night-100/60 text-center">
+            Vote à main levée — tout le monde voit qui vote pour qui, en direct.
+          </p>
+          {!me?.isAlive && <p className="text-xs text-night-100/60 text-center">Vous êtes spectateur(trice).</p>}
+          <LiveVoteList
+            candidates={votable}
+            allPlayers={state.players}
+            dayVotes={state.dayVotes}
+            myId={me?.id ?? null}
+            interactive={Boolean(me?.isAlive)}
+            onSelect={async (targetId) => {
+              const { emitWithAck } = await import("@/lib/socket");
+              await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
+            }}
+          />
         </section>
       );
     }

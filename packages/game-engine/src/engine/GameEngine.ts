@@ -484,6 +484,10 @@ export class GameEngine {
       lastDeaths,
       mowgliTransformedAnnounced: this.state.mowgliTransformedAnnounced,
       winner: this.state.winner,
+      // Open ballot by design: only live during the actual voting phase, so
+      // it can't leak a round-1 vote into TIE_DEFENSE or a stale round into
+      // the next elimination.
+      dayVotes: this.state.phase === "DAY_VOTE" ? Object.fromEntries(this.state.dayVote.votes) : {},
     };
   }
 

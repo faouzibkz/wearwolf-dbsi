@@ -269,6 +269,14 @@ export interface GameStatePublic {
   lastDeaths: RevealedDeath[];
   mowgliTransformedAnnounced: boolean;
   winner: Team | null;
+  /**
+   * The village's day elimination vote is an OPEN ballot (by design, unlike
+   * night actions): voterId -> targetId, live, for every vote cast so far
+   * in the current round. Only populated during the DAY_VOTE phase; empty
+   * at every other time (including night votes, Chef election votes, and
+   * once a round resolves). Every player can see who is voting for whom.
+   */
+  dayVotes: Record<string, string>;
 }
 
 export interface EndGameStats {
