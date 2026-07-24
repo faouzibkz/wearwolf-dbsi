@@ -283,7 +283,12 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
         engine.submitNightAction(playerId, payload.actionType, payload.targetId);
-        broadcastGameState(io, engine);
+        // Must re-push night prompts (not just broadcast state): once the
+        // wolves lock in a target, roles prompted later in priority order
+        // (e.g. Sorcière) need their context refreshed with that target —
+        // otherwise they're stuck looking at the stale prompt from the
+        // start of the night, before any wolf had voted.
+        sync(io, engine);
       }, ack);
     });
 
