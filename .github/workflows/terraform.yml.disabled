@@ -1,0 +1,88 @@
+name: Terraform
+
+# Two distinct triggers, deliberately kept separate:
+#
+#   - Any push or pull request touching infra/aws/** runs PLAN ONLY. This
+#     is safe to run automatically — `terraform plan` never changes
+#     anything in AWS, it just shows what WOULD change. Read the output
+#     in the Actions log before merging.
+#
+#   - APPLY only ever runs when a human explicitly clicks "Run workflow"
+#     in the Actions tab (workflow_dispatch). This is the human-in-the-
+#     loop gate for anything that provisions or changes real, billable
+#     AWS resources — nothing applies infrastructure changes just because
+#     a commit landed on main.
+on:
+  pull_request:
+    paths:
+      - "infra/aws/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/aws/**"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-3
+
+jobs:
+  plan:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init
+
+      # github.repository is provided automatically by GitHub Actions as
+      # "owner/repo" — no manual configuration needed to satisfy the
+      # github_repository variable that has no default in variables.tf.
+      - run: terraform plan -var="github_repository=${{ github.repository }}"
+
+  apply:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init
+
+      - run: terraform plan -var="github_repository=${{ github.repository }}" -out=tfplan
+
+      # Manually dispatching this workflow IS the approval — there is no
+      # further gate here. If you'd rather have a second human-approval
+      # step even after clicking "Run workflow", add a GitHub Environment
+      # with required reviewers and point this job at it (`environment:`
+      # key) — not set up here to keep this template runnable as-is.
+      - run: terraform apply tfplan

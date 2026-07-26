@@ -1,14 +1,16 @@
 ############################################################################
 # Postgres database. Notable choices:
 #
-#   - manage_master_user_password = true: RDS generates a strong random
-#     password itself and stores it in AWS Secrets Manager. Nobody — not
-#     us, not this file, not Terraform state in plain text — ever sees or
-#     types the actual password. The ECS task definition (next stack)
-#     will reference the secret by ARN, and AWS injects it into the
-#     container's environment at startup. This is the standard modern
-#     pattern for any DB credential; a plaintext password variable is
-#     what we're deliberately avoiding.
+#   - password = random_password.db_password.result: a password Terraform
+#     generates itself (see secrets.tf), never typed by a human, never
+#     hardcoded. We use this instead of RDS's own manage_master_user_password
+#     feature because that feature stores ONLY the password in Secrets
+#     Manager — but Prisma needs one single assembled DATABASE_URL
+#     connection string, and ECS can only inject a secret's raw value into
+#     one env var, it can't stitch several secrets into one string at
+#     runtime. So secrets.tf composes the full connection string itself
+#     (using this same random password) and stores THAT as the secret ECS
+#     actually injects. Same security property, different mechanism.
 #
 #   - db.t4g.micro, 20GB gp3, single-AZ: matches the RDS free tier
 #     (750 hrs/month, only for a new account's first 12 months). If that
@@ -64,7 +66,7 @@ resource "aws_db_instance" "main" {
   db_name  = var.db_name
   username = var.db_username
 
-  manage_master_user_password = true
+  password = random_password.db_password.result
 
   db_subnet_group_name    = aws_db_subnet_group.main.name
   vpc_security_group_ids  = [aws_security_group.rds.id]

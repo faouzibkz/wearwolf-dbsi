@@ -1,0 +1,95 @@
+name: Build, push, and deploy
+
+# Runs whenever app or shared package code changes on master (this repo's
+# working branch — not main). Does NOT touch infrastructure at all, only
+# builds Docker images, pushes them to the two ECR repos (tagged both
+# :latest and with the commit SHA, so there's always a specific,
+# rollback-able version behind "latest"), and tells ECS to redeploy using
+# the new images.
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - ".github/workflows/app-deploy.yml"
+  workflow_dispatch: {} # lets you trigger a redeploy manually from the Actions tab without a new commit
+
+permissions:
+  id-token: write # required for OIDC — this is what lets AssumeRoleWithWebIdentity work with no stored secret
+  contents: read
+
+env:
+  AWS_REGION: eu-west-3
+  ECR_WEB_REPOSITORY: loupgarou-web
+  ECR_SERVER_REPOSITORY: loupgarou-server
+  ECS_CLUSTER: loupgarou-cluster
+  ECS_WEB_SERVICE: loupgarou-web
+  ECS_SERVER_SERVICE: loupgarou-server
+  SITE_URL: https://loupgarou-dbsi.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APP_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push web image
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build \
+            -f apps/web/Dockerfile \
+            -t "$REGISTRY/$ECR_WEB_REPOSITORY:latest" \
+            -t "$REGISTRY/$ECR_WEB_REPOSITORY:${{ github.sha }}" \
+            --build-arg NEXT_PUBLIC_SERVER_URL="$SITE_URL" \
+            .
+          docker push "$REGISTRY/$ECR_WEB_REPOSITORY:latest"
+          docker push "$REGISTRY/$ECR_WEB_REPOSITORY:${{ github.sha }}"
+
+      - name: Build and push server image
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build \
+            -f apps/server/Dockerfile \
+            -t "$REGISTRY/$ECR_SERVER_REPOSITORY:latest" \
+            -t "$REGISTRY/$ECR_SERVER_REPOSITORY:${{ github.sha }}" \
+            .
+          docker push "$REGISTRY/$ECR_SERVER_REPOSITORY:latest"
+          docker push "$REGISTRY/$ECR_SERVER_REPOSITORY:${{ github.sha }}"
+
+      # Registers a new task definition revision pointing at the
+      # commit-SHA-tagged image (not "latest") — this is what gives you
+      # an actual audit trail of what's deployed, and a real rollback
+      # path (redeploy an older revision) instead of just re-pushing
+      # over the same mutable tag.
+      - name: Deploy web service
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition loupgarou-web --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMAGE "$REGISTRY/$ECR_WEB_REPOSITORY:${{ github.sha }}" \
+            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query "taskDefinition.taskDefinitionArn" --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_WEB_SERVICE" --task-definition "$NEW_ARN" > /dev/null
+
+      - name: Deploy server service
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition loupgarou-server --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMAGE "$REGISTRY/$ECR_SERVER_REPOSITORY:${{ github.sha }}" \
+            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query "taskDefinition.taskDefinitionArn" --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVER_SERVICE" --task-definition "$NEW_ARN" > /dev/null

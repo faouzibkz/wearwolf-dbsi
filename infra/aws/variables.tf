@@ -27,3 +27,14 @@ variable "db_username" {
   type        = string
   default     = "loupgarou_admin"
 }
+
+variable "domain_name" {
+  description = "The registered domain, without any subdomain (apex). Must already exist as a Route53 hosted zone."
+  type        = string
+  default     = "loupgarou-dbsi.com"
+}
+
+variable "github_repository" {
+  description = "Your GitHub repo as \"owner/repo\" (e.g. \"fouzi/loupgarou\"). Used to restrict which repo's GitHub Actions runs are allowed to assume the CI IAM roles below — deliberately has no default, so this must be set explicitly (via terraform.tfvars or -var) rather than silently trusting a placeholder."
+  type        = string
+}
