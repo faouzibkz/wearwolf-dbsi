@@ -12,6 +12,7 @@ function bootToNight1(names: string[], roleCounts: Record<string, number>, seed:
   engine.advanceChefSpeaker();
   for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
   engine.tallyChefVoteAndProceed();
+  engine.proceedFromChefRevealToDiscussion();
   engine.endDay1Discussion();
   return { engine, ids };
 }
@@ -47,6 +48,8 @@ describe("Loup Blanc plays as a plain Loup-Garou (pack kill vote only, no specia
     for (const n of names) if (n !== wolf) engine.castDayVote(ids[n]!, ids[wolf]!);
     const outcome = engine.tallyDayVoteAndProceed();
     expect(outcome.eliminatedId).toBe(ids[wolf]);
+    expect(engine.getPhase()).toBe("DAY_VOTE_RESULT"); // brief announcement pause first
+    engine.proceedFromDayVoteResultToNight();
     expect(engine.getPhase()).toBe("NIGHT"); // game continues, Loup Blanc still alive
 
     const prompts = engine.getNightPrompts();

@@ -14,6 +14,7 @@ describe("Mowgli transformation", () => {
     engine.advanceChefSpeaker();
     for (const n of ["B", "C", "D", "E"]) engine.castChefVote(ids[n]!, ids.A!);
     engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
     engine.endDay1Discussion();
 
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
@@ -59,6 +60,7 @@ describe("Chasseur death trigger", () => {
     engine.advanceChefSpeaker();
     for (const n of names) if (n !== chief) engine.castChefVote(ids[n]!, ids[chief]!);
     engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
     engine.endDay1Discussion();
 
     engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[chasseur]!);

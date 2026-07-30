@@ -12,6 +12,7 @@ function bootToNight1(names: string[], roleCounts: Record<string, number>, seed:
   engine.advanceChefSpeaker();
   for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
   engine.tallyChefVoteAndProceed();
+  engine.proceedFromChefRevealToDiscussion();
   engine.endDay1Discussion();
   return { engine, ids };
 }
@@ -74,6 +75,7 @@ describe("public death reveal (name + role, never the mechanism)", () => {
     }
     engine.tallyDayVoteAndProceed();
     expect(engine.getPublicState().lastDeaths.map((d) => d.playerId)).toEqual([ids[dayVictim]]);
+    engine.proceedFromDayVoteResultToNight();
 
     // Night 2: nobody targeted -> nobody dies -> lastDeaths resets to empty,
     // it must NOT still show dayVictim (or nightVictim) from before.

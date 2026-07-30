@@ -15,6 +15,8 @@ import { generateGameCode, generatePlayerId, generateReconnectToken } from "../u
 import { shuffle } from "../util/shuffle";
 import { ROLE_REGISTRY } from "../roles/registry";
 import * as ChefElection from "./ChefElection";
+import * as DayDiscussion from "./DayDiscussion";
+import * as TieDefense from "./TieDefense";
 import * as VoteManager from "./VoteManager";
 import * as NightResolver from "./NightResolver";
 import { processDeaths } from "./DeathQueue";
@@ -55,6 +57,8 @@ export class GameEngine {
       nightNumber: 0,
       dayNumber: 1,
       chef: { candidates: [], debateOrder: [], currentSpeakerIndex: 0, votes: new Map(), electedId: null },
+      dayDiscussion: null,
+      tieDefense: null,
       dayVote: { votes: new Map(), round: 1, tiedIds: [] },
       corbeauMarkedPlayerId: null,
       nightScratch: null,
@@ -239,6 +243,35 @@ export class GameEngine {
     this.state.phase = "CHEF_DEBATE";
   }
 
+  /**
+   * Auto-progress-friendly version of "move on from candidacy": if at
+   * least one player volunteered, behaves exactly like forceStartChefDebate.
+   * If nobody volunteered by the deadline, a fully-automatic game can't
+   * just throw and stall forever — instead it picks a random alive player,
+   * elects them uncontested, and goes straight to the reveal. Used both by
+   * the CHEF_CANDIDACY auto-progress timer and by the admin's manual
+   * "phase suivante" button (which used to throw "Aucun candidat ne s'est
+   * présenté" in this exact situation).
+   */
+  progressChefCandidacy(): { autoElected: boolean } {
+    if (this.state.phase !== "CHEF_CANDIDACY") throw new Error("Ce n'est pas le moment.");
+    if (this.state.chef.candidates.length > 0) {
+      this.forceStartChefDebate();
+      return { autoElected: false };
+    }
+    this.snapshot();
+    const alive = this.ctx().getAlivePlayers();
+    const chosen = shuffle(alive, this.rng)[0]!;
+    this.state.chef.candidates = [chosen.id];
+    this.state.chef.electedId = chosen.id;
+    chosen.isChef = true;
+    this.appendLog(
+      `Personne ne s'est présenté(e) — ${chosen.nickname} est désigné(e) Chef du village au hasard.`,
+    );
+    this.state.phase = "CHEF_REVEAL";
+    return { autoElected: true };
+  }
+
   advanceChefSpeaker(): { done: boolean } {
     if (this.state.phase !== "CHEF_DEBATE") throw new Error("Ce n'est pas le moment.");
     const result = ChefElection.advanceSpeaker(this.ctx());
@@ -258,17 +291,53 @@ export class GameEngine {
     if (this.state.phase !== "CHEF_VOTE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
     const electedId = ChefElection.tallyChefVote(this.ctx(), this.rng);
-    this.state.phase = "DAY_1_DISCUSSION";
+    this.state.phase = "CHEF_REVEAL";
     return electedId;
+  }
+
+  /** Leaves the "X est élu(e) Chef" announcement pause and starts Day 1 discussion. */
+  proceedFromChefRevealToDiscussion(): void {
+    if (this.state.phase !== "CHEF_REVEAL") throw new Error("Ce n'est pas le moment.");
+    this.snapshot();
+    this.state.phase = "DAY_1_DISCUSSION";
+    DayDiscussion.startDayDiscussion(this.ctx(), this.rng);
   }
 
   // -------------------------------------------------------------------
   // Day 1 discussion -> Night
   // -------------------------------------------------------------------
 
+  /** Manual "skip the rest of the discussion" — bypasses however far the speaking order has gotten. */
   endDay1Discussion(): void {
     if (this.state.phase !== "DAY_1_DISCUSSION") throw new Error("Ce n'est pas le moment.");
     this.startNight();
+  }
+
+  getCurrentDaySpeakerId(): string | null {
+    return DayDiscussion.currentDaySpeakerId(this.ctx());
+  }
+
+  /**
+   * Advances to the next speaker in today's discussion (DAY_1_DISCUSSION
+   * or DAY_DISCUSSION). Called both by the per-speaker auto-progress timer
+   * and by "passe la parole". When the Chef's closing turn just ended,
+   * this automatically moves on to the next phase — same pattern as
+   * advanceChefSpeaker() auto-moving CHEF_DEBATE -> CHEF_VOTE.
+   */
+  advanceDaySpeaker(): { done: boolean } {
+    if (this.state.phase !== "DAY_1_DISCUSSION" && this.state.phase !== "DAY_DISCUSSION") {
+      throw new Error("Ce n'est pas le moment.");
+    }
+    const result = DayDiscussion.advanceDaySpeaker(this.ctx());
+    if (result.done) {
+      this.snapshot();
+      if (this.state.phase === "DAY_1_DISCUSSION") {
+        this.startNight();
+      } else {
+        this.state.phase = "DAY_VOTE";
+      }
+    }
+    return result;
   }
 
   private startNight(): void {
@@ -279,9 +348,10 @@ export class GameEngine {
     this.appendLog("La nuit tombe sur le village.");
   }
 
-  getNightPrompts() {
+  /** `onlyPending` (default true): exclude players who already submitted an action tonight. See NightResolver.collectNightPrompts. */
+  getNightPrompts(onlyPending = true) {
     if (this.state.phase !== "NIGHT") return [];
-    return NightResolver.collectNightPrompts(this.ctx(), this.state.nightNumber);
+    return NightResolver.collectNightPrompts(this.ctx(), this.state.nightNumber, onlyPending);
   }
 
   submitNightAction(playerId: string, actionType: string, targetId?: string): void {
@@ -365,11 +435,61 @@ export class GameEngine {
     this.tryResumeAfterBlockers();
   }
 
-  /** True while any death-triggered action (Chasseur shot, Chef succession) still needs resolving. */
-  private hasPendingBlockers(): boolean {
+  /**
+   * True while any death-triggered action (Chasseur shot, Chef succession)
+   * still needs resolving. Public because the server's timer scheduler
+   * (apps/server/src/socket/timers.ts) must check this BEFORE deciding
+   * what to schedule: while blocked, the surrounding phase (NIGHT or
+   * DAY_VOTE) doesn't actually move, and blindly rescheduling that phase's
+   * own (much longer) timer would eventually re-fire and re-run night/vote
+   * resolution a second time on top of an already-resolved state. See
+   * resolvePendingBlockersIfAny() for the auto-progress safety net.
+   */
+  hasPendingBlockers(): boolean {
     return (
       this.state.pendingChasseurShooterIds.length > 0 || this.state.pendingChefSuccessionDeadChefId !== null
     );
+  }
+
+  /**
+   * Auto-progress safety net: if a pending Chasseur shot and/or Chef
+   * succession is never resolved by the player in question (AFK,
+   * disconnected, indecisive), a fully-automatic game must not freeze
+   * forever waiting on them. Called by the server once the dedicated
+   * pending-blocker deadline (timers.chasseurShot / timers.chefSuccession)
+   * expires. Picks a random valid target/successor for each still-pending
+   * blocker and resolves it exactly the way a manual submission would,
+   * which naturally lets tryResumeAfterBlockers() continue the game once
+   * every blocker has cleared.
+   */
+  resolvePendingBlockersIfAny(): void {
+    for (const shooterId of [...this.state.pendingChasseurShooterIds]) {
+      const eligible = this.ctx().getAlivePlayers().filter((p) => p.id !== shooterId);
+      if (eligible.length === 0) {
+        const idx = this.state.pendingChasseurShooterIds.indexOf(shooterId);
+        if (idx !== -1) this.state.pendingChasseurShooterIds.splice(idx, 1);
+        continue;
+      }
+      const target = shuffle(eligible, this.rng)[0]!;
+      this.appendLog(
+        `${this.ctx().getPlayer(shooterId).nickname} n'a pas tiré à temps — cible choisie au hasard.`,
+      );
+      this.submitChasseurShot(shooterId, target.id);
+    }
+
+    const deadChefId = this.state.pendingChefSuccessionDeadChefId;
+    if (deadChefId) {
+      const eligible = this.ctx().getAlivePlayers();
+      if (eligible.length === 0) {
+        this.state.pendingChefSuccessionDeadChefId = null;
+      } else {
+        const successor = shuffle(eligible, this.rng)[0]!;
+        this.appendLog(
+          `Succession non désignée à temps — ${successor.nickname} devient Chef du village au hasard.`,
+        );
+        this.chooseChefSuccessor(deadChefId, successor.id);
+      }
+    }
   }
 
   /** Resume whatever transition was paused for a pending blocker, once all of them have cleared. */
@@ -395,12 +515,14 @@ export class GameEngine {
     this.snapshot();
     this.state.dayNumber += 1;
     this.state.phase = "DAY_DISCUSSION";
+    DayDiscussion.startDayDiscussion(this.ctx(), this.rng);
   }
 
   // -------------------------------------------------------------------
   // Day discussion / vote / tie handling
   // -------------------------------------------------------------------
 
+  /** Manual "skip the rest of the discussion" — bypasses however far the speaking order has gotten. */
   endDayDiscussion(): void {
     if (this.state.phase !== "DAY_DISCUSSION") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
@@ -420,6 +542,11 @@ export class GameEngine {
 
     if (outcome.awaitingAnotherRound) {
       this.state.phase = "TIE_DEFENSE";
+      // Randomly order the tied players' defense turns — same per-speaker
+      // queue mechanic as the Chef debate and day discussion, so the
+      // timer/UI machinery just works instead of showing a flat, contentless
+      // phase with no real countdown to attach to.
+      TieDefense.startTieDefense(this.ctx(), this.rng);
       return outcome;
     }
     if (outcome.needsManualResolution) {
@@ -433,10 +560,32 @@ export class GameEngine {
     return outcome;
   }
 
+  /** Manual "skip the rest of the defense" — bypasses however far the speaking order has gotten. */
   endTieDefense(): void {
     if (this.state.phase !== "TIE_DEFENSE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
     this.state.phase = "DAY_VOTE"; // reuses the round-2+ voting logic in VoteManager
+  }
+
+  getCurrentTieDefenseSpeakerId(): string | null {
+    return TieDefense.currentTieDefenseSpeakerId(this.ctx());
+  }
+
+  /**
+   * Advances to the next tied player's defense turn. Called both by the
+   * per-speaker auto-progress timer and by "passe la parole". When the
+   * last tied player's turn just ended, this automatically moves on to
+   * DAY_VOTE (round 2+) — same pattern as advanceChefSpeaker()/
+   * advanceDaySpeaker() auto-moving to the next phase.
+   */
+  advanceTieDefenseSpeaker(): { done: boolean } {
+    if (this.state.phase !== "TIE_DEFENSE") throw new Error("Ce n'est pas le moment.");
+    const result = TieDefense.advanceTieDefenseSpeaker(this.ctx());
+    if (result.done) {
+      this.snapshot();
+      this.state.phase = "DAY_VOTE";
+    }
+    return result;
   }
 
   resolveTieManually(targetId: string | null): VoteManager.DayVoteOutcome {
@@ -448,6 +597,22 @@ export class GameEngine {
     return outcome;
   }
 
+  /**
+   * Auto-progress safety net for TIE_REVOTE — the one deliberately-manual
+   * checkpoint (a tie under CHEF_DECIDES/ADMIN_DECIDES waits for a human
+   * pick via resolveTieManually). Even a deliberate manual step shouldn't
+   * be able to freeze a fully-automatic game forever, so once its own
+   * timers.tieRevote deadline passes, break the tie at random exactly like
+   * the TieResolutionRule "RANDOM" option would.
+   */
+  autoResolveTieRevoteIfPending(): void {
+    if (this.state.phase !== "TIE_REVOTE") return;
+    const tiedIds = this.state.dayVote.tiedIds;
+    const choice = tiedIds.length > 0 ? shuffle(tiedIds, this.rng)[0]! : null;
+    this.appendLog("Égalité non résolue à temps — décision prise au hasard.");
+    this.resolveTieManually(choice);
+  }
+
   private finishEliminationAndProceed(): void {
     if (this.hasPendingBlockers()) return; // blocked, wait for shot(s) and/or Chef succession
     const winner = checkVictory(this.ctx());
@@ -455,6 +620,13 @@ export class GameEngine {
       this.endGame(winner);
       return;
     }
+    this.state.phase = "DAY_VOTE_RESULT";
+  }
+
+  /** Leaves the "X a été éliminé(e) / personne n'a été éliminé(e)" announcement pause and starts the next night. */
+  proceedFromDayVoteResultToNight(): void {
+    if (this.state.phase !== "DAY_VOTE_RESULT") throw new Error("Ce n'est pas le moment.");
+    this.snapshot();
     this.startNight();
   }
 
@@ -535,6 +707,10 @@ export class GameEngine {
       // the next elimination.
       dayVotes: this.state.phase === "DAY_VOTE" ? Object.fromEntries(this.state.dayVote.votes) : {},
       dayVoteTally: this.state.phase === "DAY_VOTE" ? VoteManager.computeLiveVoteTally(this.ctx()) : {},
+      dayDiscussionOrder: this.state.dayDiscussion?.order ?? null,
+      dayDiscussionCurrentSpeakerId: DayDiscussion.currentDaySpeakerId(this.ctx()),
+      tieDefenseOrder: this.state.tieDefense?.order ?? null,
+      tieDefenseCurrentSpeakerId: TieDefense.currentTieDefenseSpeakerId(this.ctx()),
       soundEffectsEnabled: this.state.config.soundEffectsEnabled,
     };
   }

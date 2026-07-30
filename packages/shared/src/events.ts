@@ -55,6 +55,16 @@ export const SOCKET_EVENTS = {
   CHEF_SUCCESSION_PROMPT: "chef:successionPrompt", // server -> the now-dead ex-Chef only
   CHEF_SUCCESSION_CHOOSE: "chef:successionChoose",
 
+  // --- day discussion (DAY_1_DISCUSSION + DAY_DISCUSSION share this) ---
+  // Self-serve: the current speaker can end their own turn early. An admin
+  // can also call this to force-skip a stuck/disconnected speaker.
+  DAY_DISCUSSION_PASS_TURN: "dayDiscussion:passTurn",
+
+  // --- tie defense (TIE_DEFENSE) ---
+  // Same self-serve pattern as DAY_DISCUSSION_PASS_TURN: the tied player
+  // currently defending themselves can end their own turn early.
+  TIE_DEFENSE_PASS_TURN: "tieDefense:passTurn",
+
   // --- day vote ---
   DAY_VOTE_CAST: "day:voteCast",
   DAY_VOTE_RESULT: "day:voteResult", // admin only, detailed
@@ -89,8 +99,21 @@ export type SocketEventName = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS]
 // ---------------------------------------------------------------------------
 
 export interface AdminAuthPayload {
-  adminSecret: string;
-  gameCode?: string; // omit to create a new game
+  /**
+   * Omit gameCode to create a brand new game — no token needed, anyone can
+   * do this. To resume as host of an EXISTING game (e.g. after a page
+   * refresh), both gameCode and the hostToken issued when that game was
+   * created are required — this is what actually protects a running
+   * game's admin view, since there's no shared password anymore.
+   */
+  gameCode?: string;
+  hostToken?: string;
+}
+
+export interface AdminAuthResult {
+  code: string;
+  /** Save this — it's the only way to resume as this game's host later. */
+  hostToken: string;
 }
 
 export interface PlayerJoinPayload {

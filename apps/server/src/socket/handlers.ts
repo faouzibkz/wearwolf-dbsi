@@ -18,22 +18,16 @@ import {
   type WolfChatSendPayload,
 } from "@loupgarou/shared";
 import { gameRegistry } from "../gameRegistry.js";
-import { config } from "../config.js";
 import { listPresets, savePreset } from "../db/persistence.js";
-import { broadcastGameState, notifyGame, notifyPlayer, pushChasseurPrompts, pushChefSuccessionPrompt, pushNightPrompts, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
-import { pushWolfRoomState, relayWolfChatMessage } from "./wolfRoom.js";
+import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
+import { relayWolfChatMessage } from "./wolfRoom.js";
 import { forceNextPhase } from "./forceNextPhase.js";
 import { safeAck, type Ack, type SocketData } from "./types.js";
 import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
+import { pushAllPrompts } from "./sync.js";
 
 function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
-  broadcastGameState(io, engine);
-  pushChasseurPrompts(io, engine);
-  pushChefSuccessionPrompt(io, engine);
-  if (engine.getPhase() === "NIGHT") {
-    pushNightPrompts(io, engine);
-    pushWolfRoomState(io, engine);
-  }
+  pushAllPrompts(io, engine);
   schedulePhaseTimer(io, engine);
 }
 
@@ -41,33 +35,50 @@ export function registerSocketHandlers(io: Server): void {
   io.on("connection", (socket: Socket<any, any, any, SocketData>) => {
     socket.data.isAdmin = false;
 
+    // No shared password anymore. Omitting gameCode always succeeds and
+    // creates a brand new game — anyone can do this, no gate at all.
+    // Supplying gameCode means "let me resume as THIS game's host," which
+    // only succeeds if hostToken matches the one issued when it was
+    // created (see gameRegistry.create) — that's what actually protects
+    // an in-progress game's admin view now that there's no typed secret.
     socket.on(SOCKET_EVENTS.ADMIN_AUTH, (payload: AdminAuthPayload, ack: Ack) => {
       safeAck(() => {
-        if (payload.adminSecret !== config.adminSecret) {
-          throw new Error("Code administrateur invalide.");
+        let engine: import("@loupgarou/game-engine").GameEngine;
+        let hostToken: string;
+
+        if (payload.gameCode) {
+          engine = gameRegistry.requireGame(payload.gameCode);
+          if (!gameRegistry.isValidHostToken(engine.getCode(), payload.hostToken)) {
+            throw new Error("Jeton hôte invalide pour cette partie.");
+          }
+          hostToken = payload.hostToken!;
+        } else {
+          const created = gameRegistry.create(DEFAULT_GAME_CONFIG);
+          engine = created.engine;
+          hostToken = created.hostToken;
         }
-        const engine = payload.gameCode
-          ? gameRegistry.requireGame(payload.gameCode)
-          : gameRegistry.create(DEFAULT_GAME_CONFIG);
 
         socket.data.isAdmin = true;
         socket.data.gameCode = engine.getCode();
         socket.join(roomForGame(engine.getCode()));
         gameRegistry.setAdminSocket(engine.getCode(), socket.id);
         sync(io, engine);
-        return { code: engine.getCode() };
+        return { code: engine.getCode(), hostToken };
       }, ack);
     });
 
+    // For an already-authenticated host to spin up an additional game from
+    // the same browser session (e.g. running two tables at once) without
+    // losing their first game's admin connection.
     socket.on(SOCKET_EVENTS.ADMIN_CREATE_GAME, (payload: AdminCreateGamePayload, ack: Ack) => {
       safeAck(() => {
-        requireAdminSecretless(socket);
-        const engine = gameRegistry.create(payload.config);
+        requireAdmin(socket);
+        const { engine, hostToken } = gameRegistry.create(payload.config);
         socket.data.gameCode = engine.getCode();
         socket.join(roomForGame(engine.getCode()));
         gameRegistry.setAdminSocket(engine.getCode(), socket.id);
         sync(io, engine);
-        return { code: engine.getCode() };
+        return { code: engine.getCode(), hostToken };
       }, ack);
     });
 
@@ -257,6 +268,38 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
+    // -----------------------------------------------------------------
+    // Day discussion — self-serve "passe la parole"
+    // -----------------------------------------------------------------
+
+    socket.on(SOCKET_EVENTS.DAY_DISCUSSION_PASS_TURN, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const currentSpeakerId = engine.getCurrentDaySpeakerId();
+        if (!socket.data.isAdmin && socket.data.playerId !== currentSpeakerId) {
+          throw new Error("Ce n'est pas votre tour de parler.");
+        }
+        engine.advanceDaySpeaker();
+        sync(io, engine);
+      }, ack);
+    });
+
+    // -----------------------------------------------------------------
+    // Tie defense — self-serve "passe la parole" (same pattern as day discussion)
+    // -----------------------------------------------------------------
+
+    socket.on(SOCKET_EVENTS.TIE_DEFENSE_PASS_TURN, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const currentSpeakerId = engine.getCurrentTieDefenseSpeakerId();
+        if (!socket.data.isAdmin && socket.data.playerId !== currentSpeakerId) {
+          throw new Error("Ce n'est pas votre tour de parler.");
+        }
+        engine.advanceTieDefenseSpeaker();
+        sync(io, engine);
+      }, ack);
+    });
+
     socket.on(SOCKET_EVENTS.CHEF_VOTE_CAST, (payload: ChefVoteCastPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
@@ -311,7 +354,12 @@ export function registerSocketHandlers(io: Server): void {
         // wolves lock in a target, roles prompted later in priority order
         // (e.g. Sorcière) need their context refreshed with that target —
         // otherwise they're stuck looking at the stale prompt from the
-        // start of the night, before any wolf had voted.
+        // start of the night, before any wolf had voted. This is safe to
+        // do unconditionally because pushNightPrompts (via
+        // engine.getNightPrompts()) only re-sends to players who HAVEN'T
+        // submitted an action yet — someone who already acted (e.g. the
+        // wolves themselves) will never have their prompt reopened by a
+        // later role's submission.
         sync(io, engine);
       }, ack);
     });
@@ -373,6 +421,3 @@ function requireAdmin(socket: Socket<any, any, any, SocketData>) {
   if (!socket.data.isAdmin) throw new Error("Action réservée à l'administrateur.");
 }
 
-function requireAdminSecretless(socket: Socket<any, any, any, SocketData>) {
-  if (!socket.data.isAdmin) throw new Error("Authentifiez-vous d'abord avec ADMIN_AUTH.");
-}

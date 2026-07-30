@@ -12,6 +12,7 @@ function bootToDayVote(names: string[], seed: number) {
   engine.advanceChefSpeaker();
   for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
   engine.tallyChefVoteAndProceed();
+  engine.proceedFromChefRevealToDiscussion();
   engine.endDay1Discussion();
   engine.resolveNightAndProceed(); // nobody targeted, nobody dies
   engine.proceedFromMorningToDay();
@@ -50,12 +51,12 @@ describe("day vote is a live, open ballot", () => {
     const outcome = engine.tallyDayVoteAndProceed();
 
     expect(outcome.eliminatedId).toBe(ids.C);
-    // We're in NIGHT now (or wherever finishEliminationAndProceed lands) —
-    // either way, no stale votes should still be exposed.
+    // We're in DAY_VOTE_RESULT now (the announcement pause before night
+    // falls) — no stale votes should still be exposed.
     expect(engine.getPublicState().dayVotes).toEqual({});
   });
 
-  it("is hidden during TIE_DEFENSE (players are defending, not voting) and reappears once round 2 opens", () => {
+  it("is hidden during TIE_DEFENSE and round 2 opens with a CLEAN ballot, not round 1's stale votes", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
 
@@ -67,14 +68,19 @@ describe("day vote is a live, open ballot", () => {
     const outcome = engine.tallyDayVoteAndProceed();
     expect(outcome.awaitingAnotherRound).toBe(true);
     expect(engine.getPublicState().phase).toBe("TIE_DEFENSE");
-    // Votes are never exposed outside the DAY_VOTE phase itself, even
-    // though the underlying round-1 votes are still held internally.
     expect(engine.getPublicState().dayVotes).toEqual({});
 
     engine.endTieDefense();
     expect(engine.getPublicState().phase).toBe("DAY_VOTE");
-    // Back in DAY_VOTE (round 2): live votes are visible again.
-    expect(engine.getPublicState().dayVotes).not.toEqual({});
+    // Back in DAY_VOTE (round 2): the ballot is freshly EMPTY, not still
+    // showing round 1's votes — a tied player who doesn't recast must not
+    // have their old vote silently carried over into the re-vote.
+    expect(engine.getPublicState().dayVotes).toEqual({});
+    expect(engine.getPublicState().dayVoteTally).toEqual({});
+
+    // Once someone actually casts a round-2 vote, it shows up normally.
+    engine.castDayVote(ids.A!, ids.C!);
+    expect(engine.getPublicState().dayVotes).toEqual({ [ids.A!]: ids.C! });
   });
 });
 
@@ -111,6 +117,7 @@ describe("Chef's vote weight in the live tally", () => {
     const outcome = engine.tallyDayVoteAndProceed();
     expect(outcome.eliminatedId).toBe(targetId);
 
+    engine.proceedFromDayVoteResultToNight();
     engine.resolveNightAndProceed();
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();

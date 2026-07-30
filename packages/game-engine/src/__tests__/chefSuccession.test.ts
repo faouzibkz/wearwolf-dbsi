@@ -12,6 +12,7 @@ function bootWithElectedChef(names: string[], roleCounts: Record<string, number>
   engine.advanceChefSpeaker();
   for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
   engine.tallyChefVoteAndProceed(); // names[0] is elected Chef
+  engine.proceedFromChefRevealToDiscussion();
   engine.endDay1Discussion();
   return { engine, ids };
 }
@@ -58,6 +59,8 @@ describe("Chef du village succession on death", () => {
     expect(engine.getPendingChefSuccessionDeadChefId()).toBe(ids.Chef);
 
     engine.chooseChefSuccessor(ids.Chef!, ids.B!);
+    expect(engine.getPhase()).toBe("DAY_VOTE_RESULT"); // unblocked, brief announcement pause first
+    engine.proceedFromDayVoteResultToNight();
     expect(engine.getPhase()).toBe("NIGHT"); // now free to continue
     expect(engine.getPublicState().chefId).toBe(ids.B);
   });
@@ -77,6 +80,7 @@ describe("Chef du village succession on death", () => {
     engine.advanceChefSpeaker();
     for (const n of names) if (n !== chasseur) engine.castChefVote(ids[n]!, ids[chasseur]!);
     engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
     engine.endDay1Discussion();
 
     const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
@@ -146,6 +150,7 @@ describe("Chef du village succession on death", () => {
     engine.advanceChefSpeaker();
     for (const n of names) if (n !== chefName) engine.castChefVote(ids[n]!, ids[chefName]!);
     engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
     engine.endDay1Discussion();
 
     for (const w of wolves) engine.submitNightAction(ids[w]!, "KILL_VOTE", ids[chefName]!);

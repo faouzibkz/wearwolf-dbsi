@@ -38,7 +38,7 @@ export default function AdminDashboardPage() {
     const socket = getSocket();
     async function authenticate() {
       try {
-        await emitWithAck(SOCKET_EVENTS.ADMIN_AUTH, { adminSecret: session!.adminSecret, gameCode: code });
+        await emitWithAck(SOCKET_EVENTS.ADMIN_AUTH, { hostToken: session!.hostToken, gameCode: code });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authentification échouée.");
       }
@@ -212,10 +212,23 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
         </p>
 
         <h3 className="font-display text-gold-300 pt-2">Minuteurs (secondes)</h3>
-        <div className="grid sm:grid-cols-3 gap-3 text-sm">
-          {(Object.keys(config.timers) as (keyof typeof config.timers)[]).map((key) => (
+        <p className="text-xs text-night-600 -mt-1">
+          Débat des candidats, discussion et défense en cas d&apos;égalité : durée PAR joueur (chacun
+          parle à tour de rôle), pas pour toute la phase. Le vote du Chef utilise une courte durée fixe,
+          non configurable ici.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-3 text-sm">
+          {(
+            [
+              ["chefDebate", "Débat des candidats (par candidat)"],
+              ["dayDiscussion", "Discussion du jour (par joueur)"],
+              ["night", "Nuit"],
+              ["dayVote", "Vote du village"],
+              ["tieDefense", "Défense en cas d'égalité (par joueur à égalité)"],
+            ] as const
+          ).map(([key, label]) => (
             <label key={key} className="flex flex-col gap-1">
-              <span className="text-night-100/70">{key}</span>
+              <span className="text-night-100/70">{label}</span>
               <input
                 type="number"
                 className="input"
@@ -236,6 +249,69 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
           />
           Progression automatique (sinon, contrôle manuel des phases)
         </label>
+
+        {config.autoProgress && (
+          <div className="space-y-2 pt-2 border-t border-night-700/60">
+            <h4 className="font-display text-sm text-gold-300/90">
+              Pauses d&apos;annonce (secondes)
+            </h4>
+            <p className="text-xs text-night-600 -mt-1">
+              Petites pauses pour laisser la table lire ce qui vient de se passer (Chef élu, qui est
+              mort, qui a été banni) avant que le jeu n&apos;enchaîne tout seul.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3 text-sm">
+              {(
+                [
+                  ["chefCandidacy", "Attente des candidats au poste de Chef"],
+                  ["chefReveal", "Annonce du Chef élu"],
+                  ["morningReveal", "Annonce du réveil (mort ou non)"],
+                  ["dayVoteResult", "Annonce du résultat du vote"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex flex-col gap-1">
+                  <span className="text-night-100/70">{label}</span>
+                  <input
+                    type="number"
+                    className="input"
+                    value={config.timers[key]}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, timers: { ...c.timers, [key]: Number(e.target.value) } }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+
+            <h4 className="font-display text-sm text-gold-300/90 pt-1">
+              Délais de secours (jamais bloqué)
+            </h4>
+            <p className="text-xs text-night-600 -mt-1">
+              Si le joueur concerné ne réagit pas à temps, la partie choisit au hasard à sa place plutôt
+              que de rester figée.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3 text-sm">
+              {(
+                [
+                  ["chasseurShot", "Tir du Chasseur"],
+                  ["chefSuccession", "Succession du Chef"],
+                  ["tieRevote", "Égalité non résolue"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex flex-col gap-1">
+                  <span className="text-night-100/70">{label}</span>
+                  <input
+                    type="number"
+                    className="input"
+                    value={config.timers[key]}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, timers: { ...c.timers, [key]: Number(e.target.value) } }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         <label className="flex items-center gap-2 text-sm">
           <input

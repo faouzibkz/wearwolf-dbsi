@@ -27,6 +27,7 @@ describe("global sound effects toggle", () => {
     engine.advanceChefSpeaker();
     for (const n of ["B", "C", "D"]) engine.castChefVote(ids[n]!, ids.A!);
     engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
     engine.endDay1Discussion();
 
     // updateConfig would throw here (post-LOBBY); setSoundEffectsEnabled must not.

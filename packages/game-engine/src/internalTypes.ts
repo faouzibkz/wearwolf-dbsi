@@ -66,6 +66,28 @@ export interface ChefElectionState {
   electedId: string | null;
 }
 
+/**
+ * Today's speaking order for DAY_1_DISCUSSION / DAY_DISCUSSION: the Chef
+ * first and last, everyone else once in between, freshly shuffled each
+ * day. Null whenever neither of those two phases is active. See
+ * engine/DayDiscussion.ts and engine/SpeakerQueue.ts.
+ */
+export interface DayDiscussionState {
+  order: string[];
+  currentSpeakerIndex: number;
+}
+
+/**
+ * TIE_DEFENSE's speaking order: a fresh random shuffle of the tied
+ * players every time a tie opens, one turn each (no repeats). Same shape
+ * as DayDiscussionState — see engine/TieDefense.ts and engine/SpeakerQueue.ts.
+ * Null whenever TIE_DEFENSE isn't active.
+ */
+export interface TieDefenseState {
+  order: string[];
+  currentSpeakerIndex: number;
+}
+
 export interface DayVoteState {
   votes: Map<string, string>; // voterId -> targetId
   round: number;
@@ -82,6 +104,8 @@ export interface GameInternalState {
   nightNumber: number;
   dayNumber: number;
   chef: ChefElectionState;
+  dayDiscussion: DayDiscussionState | null;
+  tieDefense: TieDefenseState | null;
   dayVote: DayVoteState;
   corbeauMarkedPlayerId: string | null;
   nightScratch: NightScratch | null;

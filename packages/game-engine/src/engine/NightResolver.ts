@@ -30,14 +30,31 @@ export function getActiveNightRoles(ctx: EngineContext, nightNumber: number) {
   });
 }
 
-/** Prompts for every player who has something to do tonight — used by the server to push `night:prompt`. */
+/**
+ * Prompts for every player who has something to do tonight — used by the
+ * server to push `night:prompt`.
+ *
+ * `onlyPending` (default true) excludes anyone who has already submitted an
+ * action this night (tracked in `scratch.submittedActions`, set the instant
+ * `submitNightAction` runs — including a no-op "SKIP"). This matters
+ * because the server re-pushes prompts whenever a *later* role's context
+ * needs refreshing (e.g. the Sorcière needs to see the wolves' locked-in
+ * target once it's known) — without this filter, that re-push would also
+ * re-open the prompt for roles who already acted (e.g. the wolves
+ * themselves), popping their target-selection screen back up for no reason.
+ * Pass `onlyPending: false` to get the full roster regardless of submission
+ * state (e.g. for admin/debug views).
+ */
 export function collectNightPrompts(
   ctx: EngineContext,
   nightNumber: number,
+  onlyPending = true,
 ): { player: InternalPlayer; request: NightActionRequest }[] {
+  const scratch = ctx.state.nightScratch;
   const prompts: { player: InternalPlayer; request: NightActionRequest }[] = [];
   for (const role of getActiveNightRoles(ctx, nightNumber)) {
     for (const player of ctx.getAliveByRole(role.id)) {
+      if (onlyPending && scratch?.submittedActions[player.id]) continue;
       const request = role.buildNightPrompt?.(ctx, player);
       if (request) prompts.push({ player, request });
     }

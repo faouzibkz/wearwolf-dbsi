@@ -30,6 +30,8 @@ describe("Chef du village election", () => {
     engine.castChefVote(playerIds.D!, playerIds.A!);
     engine.castChefVote(playerIds.E!, playerIds.B!);
     const electedId = engine.tallyChefVoteAndProceed();
+    expect(engine.getPhase()).toBe("CHEF_REVEAL");
+    engine.proceedFromChefRevealToDiscussion();
 
     expect(electedId).toBe(playerIds.A);
     expect(engine.getPhase()).toBe("DAY_1_DISCUSSION");
@@ -48,6 +50,7 @@ describe("Chef du village election", () => {
     engine.advanceChefSpeaker();
     for (const n of ["B", "C", "D", "E", "F", "G", "H"]) engine.castChefVote(playerIds[n]!, playerIds.A!);
     engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
     engine.endDay1Discussion();
     engine.resolveNightAndProceed(); // no actions submitted -> nobody dies
     engine.proceedFromMorningToDay();

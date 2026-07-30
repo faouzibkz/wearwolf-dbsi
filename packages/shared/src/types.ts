@@ -32,17 +32,28 @@ export const CHEF_TITLE = "CHEF_DU_VILLAGE" as const;
 
 export type Team = "VILLAGE" | "LOUPS";
 
-/** Every phase the game state machine can be in. */
+/**
+ * Every phase the game state machine can be in.
+ *
+ * CHEF_REVEAL and DAY_VOTE_RESULT are short, non-interactive "announcement"
+ * pauses (same idea as MORNING) inserted so a fully-automatic game gives
+ * the table a moment to actually read what just happened — who's Chef, who
+ * got eliminated — before the clock starts on the next thing. Each has its
+ * own timer (see TimerConfig) so the pause never eats into anyone's real
+ * speaking/voting time.
+ */
 export const PHASES = [
   "LOBBY",
   "CHEF_CANDIDACY",
   "CHEF_DEBATE",
   "CHEF_VOTE",
+  "CHEF_REVEAL",
   "DAY_1_DISCUSSION",
   "NIGHT",
   "MORNING",
   "DAY_DISCUSSION",
   "DAY_VOTE",
+  "DAY_VOTE_RESULT",
   "TIE_DEFENSE",
   "TIE_REVOTE",
   "ENDED",
@@ -71,6 +82,20 @@ export interface TimerConfig {
   night: number;
   tieDefense: number;
   dayVote: number;
+  /** How long CHEF_CANDIDACY waits for volunteers before auto-picking a random Chef. */
+  chefCandidacy: number;
+  /** "X est élu(e) Chef" announcement pause before Day 1 discussion starts. */
+  chefReveal: number;
+  /** "quelqu'un est mort / personne n'est mort" announcement pause (the MORNING phase). */
+  morningReveal: number;
+  /** "X a été éliminé(e) / personne n'a été éliminé(e)" announcement pause after a day vote. */
+  dayVoteResult: number;
+  /** Safety-net deadline for a pending Chasseur shot before a random target is auto-picked. */
+  chasseurShot: number;
+  /** Safety-net deadline for a pending Chef succession before a random successor is auto-picked. */
+  chefSuccession: number;
+  /** Safety-net deadline for a manually-resolved tie (TIE_REVOTE) before it's broken at random. */
+  tieRevote: number;
 }
 
 export const DEFAULT_TIMERS: TimerConfig = {
@@ -79,8 +104,17 @@ export const DEFAULT_TIMERS: TimerConfig = {
   day1Discussion: 300,
   dayDiscussion: 240,
   night: 90,
-  tieDefense: 120,
+  // Per tied player (a defense speech isn't as long as a full debate turn),
+  // now that TIE_DEFENSE has its own randomly-ordered speaker queue.
+  tieDefense: 60,
   dayVote: 45,
+  chefCandidacy: 45,
+  chefReveal: 5,
+  morningReveal: 7,
+  dayVoteResult: 6,
+  chasseurShot: 30,
+  chefSuccession: 30,
+  tieRevote: 30,
 };
 
 export interface GameConfig {
@@ -292,6 +326,25 @@ export interface GameStatePublic {
    * Chef's vote will visually undercount.
    */
   dayVoteTally: Record<string, number>;
+  /**
+   * Today's full speaking order for DAY_1_DISCUSSION / DAY_DISCUSSION —
+   * player ids, Chef first and last, everyone else once in between. Null
+   * outside those two phases. Distinct from `currentSpeakerId` above,
+   * which is specifically the Chef-election debate's speaker (a different
+   * phase, a different queue).
+   */
+  dayDiscussionOrder: string[] | null;
+  /** Whoever's turn it currently is within dayDiscussionOrder; null outside those two phases. */
+  dayDiscussionCurrentSpeakerId: string | null;
+  /**
+   * TIE_DEFENSE's speaking order: the tied players (2 or 3 of them),
+   * freshly shuffled every time a tie opens, each getting one defense turn.
+   * Null outside TIE_DEFENSE. Distinct from `tiedPlayerIds` above, which is
+   * just the unordered set — this is specifically the randomized turn order.
+   */
+  tieDefenseOrder: string[] | null;
+  /** Whoever's turn it currently is within tieDefenseOrder; null outside TIE_DEFENSE. */
+  tieDefenseCurrentSpeakerId: string | null;
   /** Mirrors GameConfig.soundEffectsEnabled — the single source of truth every client checks before playing any cue. */
   soundEffectsEnabled: boolean;
 }

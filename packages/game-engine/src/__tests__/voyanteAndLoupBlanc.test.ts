@@ -12,6 +12,7 @@ function bootToNight1(names: string[], roleCounts: Record<string, number>, seed:
   engine.advanceChefSpeaker();
   for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
   engine.tallyChefVoteAndProceed();
+  engine.proceedFromChefRevealToDiscussion();
   engine.endDay1Discussion();
   return { engine, ids };
 }
@@ -74,6 +75,7 @@ describe("Loup Blanc house rule: cover holds on first inspection, breaks on seco
       if (n !== bystander) engine.castDayVote(ids[n]!, ids[bystander]!);
     }
     engine.tallyDayVoteAndProceed();
+    engine.proceedFromDayVoteResultToNight();
 
     engine.submitNightAction(ids[voyante]!, "INSPECT", ids[loupBlanc]!);
     expect(engine.getLastVoyanteResult(ids[voyante]!)).toMatchObject({

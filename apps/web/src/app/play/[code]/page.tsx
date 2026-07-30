@@ -15,7 +15,13 @@ import {
 } from "@loupgarou/shared";
 import { emitWithAck, getSocket } from "@/lib/socket";
 import { loadPlayerSession, type PlayerSession } from "@/lib/session";
-import { playDeathBell, playMorningRooster, playNightHowl, playVictoryFanfare } from "@/lib/soundEffects";
+import {
+  playChefFanfare,
+  playDeathBell,
+  playMorningRooster,
+  playNightHowl,
+  playVictoryFanfare,
+} from "@/lib/soundEffects";
 import { RoleCard } from "@/components/RoleCard";
 import { PlayerList } from "@/components/PlayerList";
 import { CountdownTimer } from "@/components/CountdownTimer";
@@ -76,6 +82,7 @@ export default function PlayPage() {
       if (s.phase !== prevPhaseRef.current) {
         if (s.phase === "NIGHT") playNightHowl(soundEnabledRef.current);
         else if (s.phase === "MORNING") playMorningRooster(soundEnabledRef.current);
+        else if (s.phase === "CHEF_REVEAL") playChefFanfare(soundEnabledRef.current);
         prevPhaseRef.current = s.phase;
       }
 
@@ -363,15 +370,86 @@ function PhaseView({
       );
     }
 
-    case "DAY_1_DISCUSSION":
-    case "DAY_DISCUSSION":
+    case "CHEF_REVEAL": {
+      const chef = state.players.find((p) => p.isChef);
       return (
-        <section className="card text-center space-y-3">
-          <h2 className="font-display text-lg text-gold-300">☀️ Discussion</h2>
-          <p className="text-sm text-night-100/70">Débattez à voix haute — le vote ouvrira bientôt.</p>
-          <PlayerList players={state.players} />
+        <section className="card text-center py-10 animate-fade-in space-y-4">
+          <p className="text-4xl">👑</p>
+          <p className="font-display text-xl text-gold-300">
+            {chef ? <>{chef.nickname} est élu(e) Chef du village !</> : "Un Chef du village a été désigné."}
+          </p>
         </section>
       );
+    }
+
+    case "DAY_1_DISCUSSION":
+    case "DAY_DISCUSSION": {
+      const order = state.dayDiscussionOrder ?? [];
+      const currentId = state.dayDiscussionCurrentSpeakerId;
+      const currentIndex = currentId ? order.indexOf(currentId) : -1;
+      const speaker = state.players.find((p) => p.id === currentId);
+      const isMyTurn = Boolean(me?.isAlive) && me?.id === currentId;
+
+      return (
+        <section className="card text-center space-y-4">
+          <h2 className="font-display text-lg text-gold-300">☀️ Discussion</h2>
+
+          {speaker && (
+            <div className="py-4 animate-fade-in" key={`${speaker.id}-${currentIndex}`}>
+              <p className="text-xs text-night-100/60 uppercase tracking-wide mb-1">A la parole</p>
+              <p className="font-display text-2xl text-gold-300">
+                {speaker.isChef && "👑 "}
+                {speaker.nickname}
+              </p>
+            </div>
+          )}
+
+          {isMyTurn && (
+            <button
+              className="btn-primary w-full"
+              onClick={async () => {
+                const { emitWithAck } = await import("@/lib/socket");
+                await emitWithAck(SOCKET_EVENTS.DAY_DISCUSSION_PASS_TURN, {});
+              }}
+            >
+              Passer la parole
+            </button>
+          )}
+
+          <p className="text-xs text-night-100/50">
+            {isMyTurn
+              ? "C'est votre tour — parlez, puis passez la parole quand vous avez terminé."
+              : "Débattez à voix haute pendant le tour de chacun."}
+          </p>
+
+          <ul className="space-y-1 text-left">
+            {order.map((id, i) => {
+              const p = state.players.find((pl) => pl.id === id);
+              if (!p) return null;
+              const status = i < currentIndex ? "done" : i === currentIndex ? "current" : "upcoming";
+              return (
+                <li
+                  key={`${id}-${i}`}
+                  className={`px-3 py-2 rounded-lg border flex items-center justify-between text-sm ${
+                    status === "current"
+                      ? "border-gold-400 bg-gold-400/10 text-gold-300"
+                      : status === "done"
+                        ? "border-night-800 text-night-100/30 line-through"
+                        : "border-night-700 text-night-100/70"
+                  }`}
+                >
+                  <span>
+                    {p.isChef && "👑 "}
+                    {p.nickname}
+                  </span>
+                  {status === "current" && <span className="text-xs">●</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      );
+    }
 
     case "NIGHT":
       return (
@@ -419,22 +497,112 @@ function PhaseView({
         </section>
       );
 
-    case "DAY_VOTE":
-    case "TIE_DEFENSE":
-    case "TIE_REVOTE": {
+    case "DAY_VOTE_RESULT":
+      return (
+        <section className="card text-center py-10 animate-fade-in space-y-4">
+          <p className="text-4xl">{state.lastDeaths.length > 0 ? "⚰️" : "🕊️"}</p>
+          <p className="font-display text-xl text-gold-300">
+            {state.lastDeaths.length > 0
+              ? "Le village a tranché."
+              : "Personne n'a été banni(e) du village."}
+          </p>
+          {state.lastDeaths.length > 0 && (
+            <ul className="space-y-2">
+              {state.lastDeaths.map((d) => (
+                <li key={d.playerId} className="text-sm text-night-100/90">
+                  <strong className="text-blood-300">{d.nickname}</strong> était{" "}
+                  <span className="text-gold-300">{ROLE_METADATA[d.roleId].displayName}</span>.
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      );
+
+    case "TIE_REVOTE":
+      return (
+        <section className="card text-center space-y-3 py-6">
+          <h2 className="font-display text-lg text-blood-300">⚖️ Égalité persistante</h2>
+          <p className="text-sm text-night-100/70">
+            En attente d&apos;une décision (Chef du village ou Maître du Jeu) pour départager :
+          </p>
+          <PlayerList players={state.players.filter((p) => state.tiedPlayerIds.includes(p.id))} />
+        </section>
+      );
+
+    case "TIE_DEFENSE": {
+      const order = state.tieDefenseOrder ?? [];
+      const currentId = state.tieDefenseCurrentSpeakerId;
+      const currentIndex = currentId ? order.indexOf(currentId) : -1;
+      const speaker = state.players.find((p) => p.id === currentId);
+      const isMyTurn = Boolean(me?.isAlive) && me?.id === currentId;
+
+      return (
+        <section className="card text-center space-y-4">
+          <h2 className="font-display text-lg text-blood-300">⚖️ Égalité ! Les accusés se défendent</h2>
+
+          {speaker && (
+            <div className="py-4 animate-fade-in" key={`${speaker.id}-${currentIndex}`}>
+              <p className="text-xs text-night-100/60 uppercase tracking-wide mb-1">Se défend</p>
+              <p className="font-display text-2xl text-gold-300">
+                {speaker.isChef && "👑 "}
+                {speaker.nickname}
+              </p>
+            </div>
+          )}
+
+          {isMyTurn && (
+            <button
+              className="btn-primary w-full"
+              onClick={async () => {
+                const { emitWithAck } = await import("@/lib/socket");
+                await emitWithAck(SOCKET_EVENTS.TIE_DEFENSE_PASS_TURN, {});
+              }}
+            >
+              Passer la parole
+            </button>
+          )}
+
+          <p className="text-xs text-night-100/50">
+            {isMyTurn
+              ? "C'est votre tour — défendez-vous, puis passez la parole quand vous avez terminé."
+              : "Chaque joueur à égalité se défend à tour de rôle avant le second vote."}
+          </p>
+
+          <ul className="space-y-1 text-left">
+            {order.map((id, i) => {
+              const p = state.players.find((pl) => pl.id === id);
+              if (!p) return null;
+              const status = i < currentIndex ? "done" : i === currentIndex ? "current" : "upcoming";
+              return (
+                <li
+                  key={`${id}-${i}`}
+                  className={`px-3 py-2 rounded-lg border flex items-center justify-between text-sm ${
+                    status === "current"
+                      ? "border-gold-400 bg-gold-400/10 text-gold-300"
+                      : status === "done"
+                        ? "border-night-800 text-night-100/30 line-through"
+                        : "border-night-700 text-night-100/70"
+                  }`}
+                >
+                  <span>
+                    {p.isChef && "👑 "}
+                    {p.nickname}
+                  </span>
+                  {status === "current" && <span className="text-xs">●</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      );
+    }
+
+    case "DAY_VOTE": {
       const votable =
-        state.phase === "DAY_VOTE" && state.tiedPlayerIds.length > 0
+        state.tiedPlayerIds.length > 0
           ? state.players.filter((p) => state.tiedPlayerIds.includes(p.id))
           : state.players;
-      if (state.phase === "TIE_DEFENSE") {
-        return (
-          <section className="card text-center space-y-3">
-            <h2 className="font-display text-lg text-blood-300">⚖️ Égalité !</h2>
-            <p className="text-sm text-night-100/70">Les joueurs à égalité se défendent :</p>
-            <PlayerList players={state.players.filter((p) => state.tiedPlayerIds.includes(p.id))} />
-          </section>
-        );
-      }
       return (
         <section className="card space-y-3">
           <h2 className="font-display text-lg text-gold-300">🗳️ Vote du village</h2>

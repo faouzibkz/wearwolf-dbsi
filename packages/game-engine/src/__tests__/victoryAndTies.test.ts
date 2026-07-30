@@ -20,6 +20,7 @@ function bootTo(
   engine.advanceChefSpeaker();
   for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
   engine.tallyChefVoteAndProceed();
+  engine.proceedFromChefRevealToDiscussion();
   engine.endDay1Discussion();
   return { engine, ids };
 }

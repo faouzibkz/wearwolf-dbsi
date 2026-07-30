@@ -107,6 +107,20 @@ recomputed from live game state on every call (never cached), so when Mowgli's f
 `roleId` flips to `LOUP_GAROU`, the very next membership check includes him automatically — no
 separate "add Mowgli to the wolf room" code path exists to forget.
 
+### Hosting, without a shared password
+
+There's no `ADMIN_SECRET` anymore. Clicking **Créer une partie** on `/admin` always succeeds,
+instantly, for anyone — the server generates a random `hostToken` for that specific game and
+returns it only to the browser that created it (`gameRegistry.create` in
+`apps/server/src/gameRegistry.ts`), the same pattern already used for each player's own
+`reconnectToken`. That token is saved to `localStorage` and is what actually lets you resume as
+that game's host after a page refresh — supplying a game's code alone only lets you *join* it as a
+player (as it always has), not administer it. There's deliberately no way to type or share a code
+to reclaim host of a game you didn't create: if you clear your browser's storage mid-game, that
+specific game's admin view is gone for good and you'd need to create a new game to keep going. The
+host still receives full role visibility for every player via `ADMIN_STATE`, same as before — that
+part hasn't changed, only how you get admitted to see it.
+
 ## Local development (no Docker)
 
 Requirements: Node 20+, npm 10+, a local Postgres (or use `docker compose up postgres` for just the
@@ -115,7 +129,7 @@ DB).
 ```bash
 npm install
 
-cp apps/server/.env.example apps/server/.env      # edit DATABASE_URL / ADMIN_SECRET
+cp apps/server/.env.example apps/server/.env      # edit DATABASE_URL if needed
 cp apps/web/.env.local.example apps/web/.env.local
 
 npm run prisma:generate --workspace=apps/server
@@ -127,15 +141,17 @@ npm run dev:web      # http://localhost:3000
 
 Then:
 
-- Open `http://localhost:3000/admin`, enter your `ADMIN_SECRET`, leave the game code blank to
-  create a new game. You'll land on the config screen with the game code + a QR code to join.
+- Open `http://localhost:3000/admin` and click **Créer une partie** — no password, anyone can do
+  this. You'll land on the config screen with the game code + a QR code to join. Whoever creates a
+  game becomes its host via a random per-game token saved in their own browser only (see "Hosting,
+  without a shared password" below) — nobody else can take over that game's admin view.
 - Open `http://localhost:3000/join` on other devices (same Wi-Fi) and enter the code + a nickname.
 - Configure roles/timers, click **Démarrer la partie**.
 
 ## Running with Docker Compose
 
 ```bash
-cp .env.example .env   # edit ADMIN_SECRET at minimum
+cp .env.example .env
 docker compose up --build
 ```
 

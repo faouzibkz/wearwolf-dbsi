@@ -10,7 +10,10 @@ export function forceNextPhase(engine: GameEngine): void {
     case "LOBBY":
       throw new Error("Utilisez 'Démarrer la partie' depuis le lobby.");
     case "CHEF_CANDIDACY":
-      engine.forceStartChefDebate();
+      // progressChefCandidacy() also covers the "nobody volunteered" case
+      // (auto-elects a random Chef instead of throwing), so the admin's
+      // manual skip button works even with zero candidates.
+      engine.progressChefCandidacy();
       return;
     case "CHEF_DEBATE": {
       let done = false;
@@ -21,6 +24,9 @@ export function forceNextPhase(engine: GameEngine): void {
     }
     case "CHEF_VOTE":
       engine.tallyChefVoteAndProceed();
+      return;
+    case "CHEF_REVEAL":
+      engine.proceedFromChefRevealToDiscussion();
       return;
     case "DAY_1_DISCUSSION":
       engine.endDay1Discussion();
@@ -37,9 +43,16 @@ export function forceNextPhase(engine: GameEngine): void {
     case "DAY_VOTE":
       engine.tallyDayVoteAndProceed();
       return;
-    case "TIE_DEFENSE":
-      engine.endTieDefense();
+    case "DAY_VOTE_RESULT":
+      engine.proceedFromDayVoteResultToNight();
       return;
+    case "TIE_DEFENSE": {
+      let done = false;
+      while (!done) {
+        done = engine.advanceTieDefenseSpeaker().done;
+      }
+      return;
+    }
     case "TIE_REVOTE":
       throw new Error("Une égalité doit être résolue manuellement (Chef ou Admin).");
     case "ENDED":

@@ -102,6 +102,11 @@ export function tallyDayVote(
   if (dayVote.round === 1) {
     dayVote.tiedIds = topIds;
     dayVote.round = 2;
+    // Round 2 starts with a clean ballot. Without this, a tied player who
+    // simply doesn't recast a vote keeps their stale round-1 entry, which
+    // then gets silently counted again in the round-2 tally — effectively
+    // carrying an old vote over into a "fresh" re-vote nobody asked for.
+    dayVote.votes.clear();
     return {
       eliminatedId: null,
       tie: true,

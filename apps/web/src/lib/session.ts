@@ -30,7 +30,7 @@ export function clearPlayerSession(): void {
 }
 
 export interface AdminSession {
-  adminSecret: string;
+  hostToken: string;
   gameCode: string;
 }
 

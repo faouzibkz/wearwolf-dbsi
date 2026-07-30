@@ -79,6 +79,15 @@ export function playDeathBell(enabled: boolean): void {
   tone(ctx, 440, now, 1.0, "sine", 0.07);
 }
 
+/** A Chef du village is elected: a short, bright triumphant chime. */
+export function playChefFanfare(enabled: boolean): void {
+  if (!enabled) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [523, 784, 1046].forEach((freq, i) => tone(ctx, freq, now + i * 0.09, 0.3, "triangle", 0.14));
+}
+
 /** Game over: a short arpeggio, brighter for the village, darker for the wolves. */
 export function playVictoryFanfare(enabled: boolean, winner: "VILLAGE" | "LOUPS"): void {
   if (!enabled) return;
