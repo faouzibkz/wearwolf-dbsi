@@ -28,13 +28,14 @@ apps/
   web/       Application Next.js (App Router) — toutes les pages/écrans joueurs et admin
 packages/
   game-engine/   Moteur de jeu pur, testé unitairement (aucune dépendance framework)
+  rating/        Moteur de rating pur, testé unitairement (Phase 2b — aucune dépendance à Prisma ni au moteur de jeu)
   shared/        Types TypeScript + constantes partagés entre les 3 autres workspaces
 infra/
   aws/       Infrastructure Terraform (AWS ECS Fargate, RDS, ALB, Route53, IAM, Secrets Manager)
 scripts/     Scripts de bootstrap (setup AWS depuis un compte neuf, etc.)
 ```
 
-Workspaces npm (`package.json` racine) : `npm run build` construit dans l'ordre `shared → game-engine → server → web` (l'ordre est important, chacun dépend du précédent).
+Workspaces npm (`package.json` racine) : `npm run build` construit dans l'ordre `shared → game-engine → rating → server → web` (l'ordre est important, chacun dépend du précédent).
 
 ---
 
@@ -80,6 +81,20 @@ Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_
 
 127 tests automatisés (`packages/game-engine/src/__tests__/*.test.ts`, 22 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, et `finalPlayerSummaries.test.ts` pour la Phase 1.
 
+Depuis la Phase 2 : +19 tests dans `packages/rating` (rating, performance, coefficients — §3.5) et +13 dans `apps/server/src/stats/deriveStats.test.ts` (§4.3) — **159 tests au total**, tous exécutés réellement, tous passants.
+
+---
+
+## 3.5 Le moteur de rating (`packages/rating`) — Phase 2b
+
+Package isolé, **sans dépendance à Prisma ni au moteur de jeu**, sur le même modèle que `packages/game-engine` : que des fonctions pures, entièrement testées (19 tests). C'est délibéré — c'est la seule façon de garder la logique de rating testable dans un environnement où le client Prisma généré n'est pas toujours disponible (voir §9).
+
+- `roleDifficulty.ts` — coefficients par rôle (section 7), config seule, jamais lue par un `switch(roleId)`.
+- `performance.ts` — `PERFORMANCE_SCORERS`, un registre par rôle **sur le même modèle que `ROLE_REGISTRY`** du moteur de jeu : une formule générique par défaut (`genericPerformanceScore`), remplaçable rôle par rôle sans toucher au reste. Aujourd'hui, **aucun rôle n'a de formule spécifique** — voir FEATURES.md section 8 pour la limite honnête (pas de journal d'événements structuré côté moteur encore).
+- `rating.ts` — `computeRatingDelta()`, la formule Elo-inspirée (section 9) ; `specializedScopeForTeam()` pour les ratings Village/Loups/Solo (section 10).
+
+`apps/server/src/rating/applyRating.ts` est la seule couche qui touche Prisma : elle récupère les lignes nécessaires (utilisateurs liés, coefficients configurés), appelle les fonctions pures de `packages/rating`, et persiste le résultat. Appelée depuis `socket/handlers.ts`'s `sync()`, **après** `finalizeGameHistory()` (elle met à jour `PlayerRecord.ratingDelta` sur les lignes que `finalizeGameHistory` vient de créer — l'ordre compte).
+
 ---
 
 ## 4. Le serveur temps réel (`apps/server`)
@@ -102,7 +117,8 @@ Trois responsabilités, toutes **best-effort** (une panne DB ne doit jamais plan
 
 - `persistGame()` — snapshot de l'état complet de chaque partie active (`Game.stateJson`), pour survivre à un redémarrage serveur.
 - `finalizeGameHistory()` — à `GAME_ENDED`, upsert **idempotent** (via la contrainte `@@unique([gameId, enginePlayerId])`) d'une ligne `PlayerRecord` par joueur : rôle, équipe, résultat (`WON`/`LOST`/`DRAW`, calculé depuis `team` vs `Game.winner`), cause et moment de mort, et **le compte lié si connu**.
-- `getUserAggregateStats()` / `getUserGameHistory()` — lecture, calculée à la volée (pas de cache) depuis les lignes `PlayerRecord` d'un compte. Le regroupement par rôle est **entièrement générique** : un nouveau `roleId` qui apparaît dans les données s'affiche automatiquement, aucune modification de code requise.
+- `getUserAggregateStats()` / `getUserGameHistory()` — lecture, calculée à la volée (pas de cache) depuis les lignes `PlayerRecord` d'un compte. Le regroupement par rôle est **entièrement générique** : un nouveau `roleId` qui apparaît dans les données s'affiche automatiquement, aucune modification de code requise. Le calcul lui-même (séries de victoires, nuits survécues, répartition des causes de mort) vit dans `apps/server/src/stats/deriveStats.ts` — des fonctions pures, sans Prisma, testées indépendamment (13 tests) ; `getUserAggregateStats()` ne fait que récupérer les lignes et les leur transmettre.
+- `applyRatingUpdates()` (`apps/server/src/rating/applyRating.ts`) — même schéma : récupère les lignes, appelle `packages/rating` (§3.5), persiste. Best-effort comme tout le reste.
 
 ### 4.4 Comptes (`auth/`, `http/authRoutes.ts`, `http/accountRoutes.ts`)
 
@@ -117,13 +133,18 @@ Trois responsabilités, toutes **best-effort** (une panne DB ne doit jamais plan
 ### 4.5 Schéma Prisma (`prisma/schema.prisma`)
 
 ```
-User            — compte permanent (identité réelle). username unique, email unique optionnel, passwordHash, displayName.
-Game            — une partie (code, phase, config, snapshot d'état, gagnant).
+User            — compte permanent (identité réelle). username unique, email unique optionnel, passwordHash, displayName,
+                   ratingGlobal/ratingVillage/ratingWolf/ratingSolo (tous @default(1000), Phase 2b).
+Game            — une partie (code, phase, config, snapshot d'état, gagnant, finalNightNumber/finalDayNumber — Phase 2a,
+                   snapshot pris une seule fois à ENDED).
 PlayerRecord     — une ligne = un joueur dans une partie donnée : nickname (pseudo temporaire, JAMAIS utilisé pour les stats),
-                   roleId, team, result, deathCause, deathMoment, userId (nullable, SetNull si le compte est supprimé).
+                   roleId, team, result, deathCause, deathMoment, ratingDelta (Phase 2b, informationnel),
+                   userId (nullable, SetNull si le compte est supprimé).
                    @@unique([gameId, enginePlayerId]) → upsert idempotent.
 GameLogEntry    — journal texte d'une partie (debug/admin).
 Preset          — configurations de partie sauvegardées par l'admin.
+RoleDifficulty  — coefficients de difficulté par rôle (Phase 2b, section 7), réglables à l'exécution sans redéploiement ;
+                   seedé au démarrage du serveur depuis packages/rating's DEFAULT_ROLE_DIFFICULTY.
 ```
 
 Note importante : **le schéma Prisma n'accepte que les commentaires `//`/`///`**, pas `/* */` — une vraie erreur de build a été introduite puis corrigée pendant cette session (voir §8, Pièges connus).
@@ -184,6 +205,9 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 - **Terraform + déploiement manuel** : voir §8 — ne jamais approuver un `apply` qui modifierait `task_definition` sur un service en prod sans comprendre pourquoi.
 - **GitHub OIDC "immutable subject claims"** (rollout du 15/07/2026) : la condition de confiance du rôle IAM utilise un wildcard (`StringLike`) sur l'ID numérique du repo pour rester compatible avec l'ancien et le nouveau format de `sub` claim.
 - **`.git/index.lock` sur ce point de montage** : ne peut pas être supprimé (`rm` échoue avec "Operation not permitted") mais peut être déplacé (`mv`) — utile seulement si vous travaillez depuis le même environnement sandbox que Claude ; sans impact pour vous en PowerShell sur votre propre machine.
+- **`npm install` échoue avec `ENOTEMPTY` directement sur ce même point de montage** (rename atomique non supporté par le montage réseau) — fonctionne normalement dans un dossier de travail local classique ; sans impact pour vous en PowerShell sur votre propre machine.
+- **Le bac à sable où ce travail autonome a été fait n'a aucun identifiant git pour `git push`** — les commits/tags sont réels (écriture disque directe sur le dépôt), mais restent locaux jusqu'à ce qu'un `git push` soit lancé depuis une machine avec les bons identifiants. Toujours vérifier `git log`/`git status` après une session autonome pour voir ce qui attend d'être poussé.
+- **Le client Prisma généré ne peut pas être régénéré dans ce même bac à sable** (CDN de binaires bloqué) — un `tsc --noEmit` "propre" sur `apps/server` dans cet environnement n'est PAS une preuve fiable de correction : le client généré présent y est soit absent, soit périmé (schéma d'avant les comptes), ce qui peut soit faire échouer la compilation à tort, soit — plus insidieux — la faire réussir à tort si des annotations de type explicites masquent l'incohérence. Tout code touchant Prisma doit être relu à la main contre `schema.prisma`, jamais considéré "vérifié" simplement parce que `tsc` n'a rien dit dans cet environnement précis.
 
 ---
 
@@ -195,6 +219,8 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 | Changer une règle de résolution de nuit | `packages/game-engine/src/engine/NightResolver.ts` |
 | Changer le vote du village | `packages/game-engine/src/engine/DayVoteQueue.ts`, `VoteManager.ts` |
 | Ajouter un champ au profil/historique | `apps/server/prisma/schema.prisma` → `apps/server/src/db/persistence.ts` → `apps/server/src/http/accountRoutes.ts` → page Next.js correspondante |
-| Ajouter une statistique dérivée (rating, XP...) | Nouveau module dans `apps/server/src/db/` ou `apps/server/src/stats/` (à créer), branché sur `finalizeGameHistory()` — voir FEATURES.md Phase 2 |
+| Ajouter/ajuster une statistique dérivée | `apps/server/src/stats/deriveStats.ts` (calculs purs, testés) → `apps/server/src/db/persistence.ts` (glue Prisma) → `apps/web/src/app/profile/page.tsx` |
+| Ajuster la formule de rating / performance / coefficients de rôle | `packages/rating/src/*.ts` (tout est pur et testé ici) — jamais dans `apps/server/src/rating/applyRating.ts`, qui ne fait que la glue Prisma |
+| Ajouter une vraie formule de performance par rôle | `packages/rating/src/performance.ts`'s `PERFORMANCE_SCORERS` — nécessite d'abord un journal d'événements structuré côté moteur, voir FEATURES.md section 8 |
 | Modifier l'infra AWS | `infra/aws/*.tf` — **toujours relire le plan avant d'approuver** |
 | Comprendre le cahier de charge original et ce qu'il reste à faire | `FEATURES.md` |

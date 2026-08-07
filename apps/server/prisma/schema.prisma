@@ -32,7 +32,31 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Phase 2b — cahier de charge sections 6/10 (rating + specialized
+  // ratings). All start at 1000 (section 6's stated initial value) and are
+  // updated by apps/server/src/rating/applyRating.ts using
+  // packages/rating's pure computeRatingDelta(); exactly one of the three
+  // specialized fields updates alongside ratingGlobal for any given game,
+  // depending on which team the player was on that game (see
+  // packages/rating's specializedScopeForTeam()).
+  ratingGlobal  Float @default(1000)
+  ratingVillage Float @default(1000)
+  ratingWolf    Float @default(1000)
+  ratingSolo    Float @default(1000)
+
   playerRecords PlayerRecord[]
+}
+
+// Runtime-tunable per-role difficulty coefficients (section 7). Seeded from
+// packages/rating's DEFAULT_ROLE_DIFFICULTY the first time a role is rated
+// (see applyRating.ts) - a row here always wins over the code default, so
+// retuning a coefficient is a data change, never a deploy. A role with no
+// row yet (brand new role, or nobody's configured it) simply uses the code
+// default/neutral fallback - see packages/rating's getRoleDifficulty().
+model RoleDifficulty {
+  roleId      String   @id
+  coefficient Float
+  updatedAt   DateTime @updatedAt
 }
 
 model Game {
@@ -87,6 +111,12 @@ model PlayerRecord {
   // "WON" | "LOST" | "DRAW" | null while the game is still in progress.
   // Computed once, at game end, from team vs. Game.winner.
   result       String?
+  // The GLOBAL rating delta this game produced for this player (null if the
+  // player wasn't account-linked, or rating hasn't been applied yet) - see
+  // applyRating.ts. Purely informational today (surfaced on history later);
+  // the authoritative current rating always lives on User, never derived
+  // by summing these.
+  ratingDelta  Float?
   joinedAt     DateTime @default(now())
 
   // Nullable: a handful of legacy PlayerRecord rows (written before accounts

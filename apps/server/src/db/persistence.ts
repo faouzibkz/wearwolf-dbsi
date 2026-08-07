@@ -1,6 +1,12 @@
 import type { GameEngine } from "@loupgarou/game-engine";
 import { prisma } from "./prisma.js";
-import { averageNightsSurvived, computeDeathBreakdown, computePerRoleStats, computeWinStreaks } from "../stats/deriveStats.js";
+import {
+  averageNightsSurvived,
+  computeDeathBreakdown,
+  computePerRoleStats,
+  computeWinStreaks,
+  type GameResult,
+} from "../stats/deriveStats.js";
 
 /**
  * Best-effort snapshot persistence. Every mutating socket handler calls
@@ -120,7 +126,7 @@ export async function finalizeGameHistory(
  */
 interface AggregateStatsRow {
   roleId: string;
-  result: string | null;
+  result: GameResult;
   isAlive: boolean;
   deathCause: string | null;
   deathMoment: string | null;
@@ -159,7 +165,7 @@ export async function getUserAggregateStats(userId: string) {
   // endedAt is still null — shouldn't happen for a row with a non-null
   // `result`, but keeps this from ever throwing on unexpected data).
   const streaks = computeWinStreaks(
-    records.map((r) => ({ result: r.result as "WON" | "LOST" | "DRAW" | null, playedAt: (r.game.endedAt ?? r.game.createdAt).getTime() })),
+    records.map((r) => ({ result: r.result, playedAt: (r.game.endedAt ?? r.game.createdAt).getTime() })),
   );
 
   const avgNightsSurvived = averageNightsSurvived(

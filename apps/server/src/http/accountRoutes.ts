@@ -39,6 +39,14 @@ accountApiRouter.get("/profile/me", requireSession, async (req: AuthedRequest, r
       createdAt: user.createdAt.toISOString(),
     },
     stats,
+    // Phase 2b (cahier de charge sections 6/10) — see
+    // apps/server/src/rating/applyRating.ts for how these evolve.
+    ratings: {
+      global: user.ratingGlobal,
+      village: user.ratingVillage,
+      wolf: user.ratingWolf,
+      solo: user.ratingSolo,
+    },
   });
 });
 

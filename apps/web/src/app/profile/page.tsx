@@ -30,6 +30,7 @@ interface ProfileData {
     executedByVillage: number;
     survivedUntilEnd: number;
   };
+  ratings: { global: number; village: number; wolf: number; solo: number };
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -84,7 +85,7 @@ export default function ProfilePage() {
     );
   }
 
-  const { user, stats } = data;
+  const { user, stats, ratings } = data;
   const winRatePct = Math.round(stats.winRate * 100);
 
   return (
@@ -109,6 +110,23 @@ export default function ProfilePage() {
             @{user.username} — membre depuis le {formatDate(user.createdAt)}
           </p>
         </div>
+      </section>
+
+      {/* Ratings (Phase 2b — spec sections 6/10). Global always shown;
+          the three specialized ratings all start at 1000 and drift apart
+          as this account plays more games on each side. */}
+      <section className="w-full max-w-2xl grid grid-cols-2 sm:grid-cols-4 gap-3 animate-fade-in">
+        {[
+          { label: "Rating global", value: Math.round(ratings.global) },
+          { label: "Rating Village", value: Math.round(ratings.village) },
+          { label: "Rating Loups", value: Math.round(ratings.wolf) },
+          { label: "Rating Solo", value: Math.round(ratings.solo) },
+        ].map((r) => (
+          <div key={r.label} className="card text-center py-4 border-gold-400/20">
+            <div className="font-display text-2xl text-gold-300">{r.value}</div>
+            <div className="text-xs text-night-100/50 mt-1">{r.label}</div>
+          </div>
+        ))}
       </section>
 
       {/* Headline stats (spec section 4 minimum set) */}

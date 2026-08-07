@@ -76,7 +76,8 @@ export function computeWinStreaks(records: StreakRow[]): { current: number; long
 
   let current = 0;
   for (let i = sorted.length - 1; i >= 0; i--) {
-    if (sorted[i].result === "WON") current += 1;
+    const row = sorted[i];
+    if (row && row.result === "WON") current += 1;
     else break;
   }
 

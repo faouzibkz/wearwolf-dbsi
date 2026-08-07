@@ -24,6 +24,7 @@ import {
 } from "@loupgarou/shared";
 import { gameRegistry } from "../gameRegistry.js";
 import { listPresets, savePreset, finalizeGameHistory } from "../db/persistence.js";
+import { applyRatingUpdates } from "../rating/applyRating.js";
 import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage } from "./wolfRoom.js";
@@ -51,10 +52,17 @@ function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): 
     // db/persistence.ts's finalizeGameHistory doc comment). Fire-and-forget:
     // best-effort like every other DB write here, must never block or
     // delay the GAME_ENDED experience for the people at the table.
+    //
+    // applyRatingUpdates runs AFTER finalizeGameHistory resolves, not in
+    // parallel with it — it updates PlayerRecord.ratingDelta on the exact
+    // rows finalizeGameHistory just upserted, so those rows have to exist
+    // first. gameRegistry's userId map is only cleared once both are done,
+    // since applyRatingUpdates needs it too.
     const playerIds = engine.getPlayers().map((p) => p.id);
-    void finalizeGameHistory(engine, (playerId) => gameRegistry.getPlayerUserId(playerId)).then(() =>
-      gameRegistry.clearPlayerUserIds(playerIds),
-    );
+    const getUserId = (playerId: string) => gameRegistry.getPlayerUserId(playerId);
+    void finalizeGameHistory(engine, getUserId)
+      .then(() => applyRatingUpdates(engine, getUserId))
+      .then(() => gameRegistry.clearPlayerUserIds(playerIds));
   }
 }
 
