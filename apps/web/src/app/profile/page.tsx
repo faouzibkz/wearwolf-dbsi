@@ -16,7 +16,20 @@ interface RoleStat {
 
 interface ProfileData {
   user: { id: string; username: string; displayName: string; createdAt: string };
-  stats: { gamesPlayed: number; gamesWon: number; gamesLost: number; winRate: number; perRole: RoleStat[] };
+  stats: {
+    gamesPlayed: number;
+    gamesWon: number;
+    gamesLost: number;
+    winRate: number;
+    perRole: RoleStat[];
+    currentWinStreak: number;
+    longestWinStreak: number;
+    averageNightsSurvived: number;
+    firstNightDeaths: number;
+    killedByWolves: number;
+    executedByVillage: number;
+    survivedUntilEnd: number;
+  };
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -108,6 +121,25 @@ export default function ProfilePage() {
         ].map((s) => (
           <div key={s.label} className="card text-center py-4">
             <div className="font-display text-2xl text-gold-300">{s.value}</div>
+            <div className="text-xs text-night-100/50 mt-1">{s.label}</div>
+          </div>
+        ))}
+      </section>
+
+      {/* Second/third stat tiers (Phase 2a) — streaks, survival, death
+          breakdown. All derived from data already stored for every game;
+          see apps/server/src/stats/deriveStats.ts for the exact formulas. */}
+      <section className="w-full max-w-2xl grid grid-cols-2 sm:grid-cols-3 gap-3 animate-fade-in">
+        {[
+          { label: "Série de victoires en cours", value: stats.currentWinStreak },
+          { label: "Meilleure série", value: stats.longestWinStreak },
+          { label: "Nuits survécues (moyenne)", value: stats.averageNightsSurvived.toFixed(1) },
+          { label: "Morts la 1ère nuit", value: stats.firstNightDeaths },
+          { label: "Tués par les loups", value: stats.killedByWolves },
+          { label: "Exécutés par le village", value: stats.executedByVillage },
+        ].map((s) => (
+          <div key={s.label} className="card text-center py-3">
+            <div className="font-display text-xl text-gold-300">{s.value}</div>
             <div className="text-xs text-night-100/50 mt-1">{s.label}</div>
           </div>
         ))}

@@ -1,5 +1,6 @@
 import type { GameEngine } from "@loupgarou/game-engine";
 import { prisma } from "./prisma.js";
+import { averageNightsSurvived, computeDeathBreakdown, computePerRoleStats, computeWinStreaks } from "../stats/deriveStats.js";
 
 /**
  * Best-effort snapshot persistence. Every mutating socket handler calls
@@ -10,6 +11,12 @@ import { prisma } from "./prisma.js";
 export async function persistGame(engine: GameEngine): Promise<void> {
   try {
     const serialized = engine.serialize() as Record<string, unknown>;
+    const ended = engine.getPhase() === "ENDED";
+    // Snapshot how far the game got (see schema.prisma's Game.finalNightNumber
+    // doc comment) only once, at the moment it actually ends - reading these
+    // off getPublicState() while the game is still in progress would just be
+    // "however far it's gotten so far", which isn't what "final" means here.
+    const publicState = engine.getPublicState();
     await prisma.game.upsert({
       where: { code: engine.getCode() },
       create: {
@@ -23,8 +30,10 @@ export async function persistGame(engine: GameEngine): Promise<void> {
         phase: engine.getPhase(),
         configJson: engine.getConfig() as object,
         stateJson: serialized as object,
-        endedAt: engine.getPhase() === "ENDED" ? new Date() : undefined,
-        winner: engine.getPublicState().winner,
+        endedAt: ended ? new Date() : undefined,
+        winner: publicState.winner,
+        finalNightNumber: ended ? publicState.nightNumber : undefined,
+        finalDayNumber: ended ? publicState.dayNumber : undefined,
       },
     });
   } catch (err) {
@@ -109,10 +118,33 @@ export async function finalizeGameHistory(
  * role shows up here automatically the first time anyone plays it — no
  * code change required (see spec section 16).
  */
+interface AggregateStatsRow {
+  roleId: string;
+  result: string | null;
+  isAlive: boolean;
+  deathCause: string | null;
+  deathMoment: string | null;
+  game: { createdAt: Date; endedAt: Date | null; finalNightNumber: number };
+}
+
+/**
+ * Section 4's full stat set (minimum tier + the two tiers added in Phase
+ * 2a). The actual math for streaks/survival/death-breakdown lives in
+ * ../stats/deriveStats.ts as plain, Prisma-free functions — this function's
+ * only job is fetching the rows and handing them over, so the calculations
+ * themselves stay unit-testable without a database.
+ */
 export async function getUserAggregateStats(userId: string) {
-  const records: { roleId: string; result: string | null }[] = await prisma.playerRecord.findMany({
+  const records: AggregateStatsRow[] = await prisma.playerRecord.findMany({
     where: { userId },
-    select: { roleId: true, result: true },
+    select: {
+      roleId: true,
+      result: true,
+      isAlive: true,
+      deathCause: true,
+      deathMoment: true,
+      game: { select: { createdAt: true, endedAt: true, finalNightNumber: true } },
+    },
   });
 
   const gamesPlayed = records.length;
@@ -120,25 +152,33 @@ export async function getUserAggregateStats(userId: string) {
   const gamesLost = records.filter((r) => r.result === "LOST").length;
   const winRate = gamesPlayed > 0 ? gamesWon / gamesPlayed : 0;
 
-  const perRoleMap = new Map<string, { games: number; wins: number; losses: number }>();
-  for (const r of records) {
-    const bucket = perRoleMap.get(r.roleId) ?? { games: 0, wins: 0, losses: 0 };
-    bucket.games += 1;
-    if (r.result === "WON") bucket.wins += 1;
-    if (r.result === "LOST") bucket.losses += 1;
-    perRoleMap.set(r.roleId, bucket);
-  }
-  const perRole = [...perRoleMap.entries()]
-    .map(([roleId, b]) => ({
-      roleId,
-      games: b.games,
-      wins: b.wins,
-      losses: b.losses,
-      winRate: b.games > 0 ? b.wins / b.games : 0,
-    }))
-    .sort((a, b) => b.games - a.games);
+  const perRole = computePerRoleStats(records);
 
-  return { gamesPlayed, gamesWon, gamesLost, winRate, perRole };
+  // "Chronological" for streak purposes = when the game actually ended
+  // (falling back to createdAt for the rare in-progress/legacy row where
+  // endedAt is still null — shouldn't happen for a row with a non-null
+  // `result`, but keeps this from ever throwing on unexpected data).
+  const streaks = computeWinStreaks(
+    records.map((r) => ({ result: r.result as "WON" | "LOST" | "DRAW" | null, playedAt: (r.game.endedAt ?? r.game.createdAt).getTime() })),
+  );
+
+  const avgNightsSurvived = averageNightsSurvived(
+    records.map((r) => ({ isAlive: r.isAlive, deathMoment: r.deathMoment, finalNightNumber: r.game.finalNightNumber })),
+  );
+
+  const deathBreakdown = computeDeathBreakdown(records);
+
+  return {
+    gamesPlayed,
+    gamesWon,
+    gamesLost,
+    winRate,
+    perRole,
+    currentWinStreak: streaks.current,
+    longestWinStreak: streaks.longest,
+    averageNightsSurvived: avgNightsSurvived,
+    ...deathBreakdown,
+  };
 }
 
 interface HistoryRow {

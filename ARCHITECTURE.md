@@ -78,7 +78,7 @@ Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_
 
 ### 3.4 Tests
 
-128 tests automatisés (`packages/game-engine/src/__tests__/*.test.ts`, 22 fichiers), `npm run test`. Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, et `finalPlayerSummaries.test.ts` pour la Phase 1.
+127 tests automatisés (`packages/game-engine/src/__tests__/*.test.ts`, 22 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, et `finalPlayerSummaries.test.ts` pour la Phase 1.
 
 ---
 

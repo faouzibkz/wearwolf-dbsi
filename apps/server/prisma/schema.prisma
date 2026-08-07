@@ -46,6 +46,15 @@ model Game {
   updatedAt   DateTime @updatedAt
   endedAt     DateTime?
   winner      String? // "VILLAGE" | "LOUPS" | null
+  // Snapshot of GameStatePublic.nightNumber/dayNumber at the moment the game
+  // reached ENDED (see persistGame in db/persistence.ts). Lets the stats
+  // layer express "nights survived" for every player without the account
+  // layer needing to reach into the engine's internal state itself - stays
+  // 0 for a game still in progress or one that ended before this field
+  // existed (old rows just report 0 nights/days survived, which only
+  // affects the "average nights survived" stat, never games/wins/losses).
+  finalNightNumber Int @default(0)
+  finalDayNumber   Int @default(0)
 
   logs    GameLogEntry[]
   players PlayerRecord[]
