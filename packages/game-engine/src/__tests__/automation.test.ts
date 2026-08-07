@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 /**
  * Covers the "fully automatic game" work: CHEF_CANDIDACY auto-pick,
@@ -107,10 +107,10 @@ describe("DAY_VOTE_RESULT announcement phase", () => {
   it("sits between a resolved day vote and NIGHT and must be explicitly advanced", () => {
     const names = ["A", "B", "C", "D", "E"];
     const { engine, ids } = bootToDayVote(names, 5);
-    for (const n of names) if (n !== "C") engine.castDayVote(ids[n]!, ids.C!);
-
-    const outcome = engine.tallyDayVoteAndProceed();
-    expect(outcome.eliminatedId).toBe(ids.C);
+    const votes: Record<string, string> = {};
+    for (const n of names) if (n !== "C") votes[ids[n]!] = ids.C!;
+    const outcome = castDayVotesInOrder(engine, votes);
+    expect(outcome?.eliminatedId).toBe(ids.C);
     expect(engine.getPhase()).toBe("DAY_VOTE_RESULT");
     expect(engine.getPublicState().lastDeaths.map((d) => d.playerId)).toEqual([ids.C]);
     expect(() => engine.resolveNightAndProceed()).toThrow(); // not NIGHT yet
@@ -129,9 +129,9 @@ describe("DAY_VOTE_RESULT announcement phase", () => {
     const { engine, ids } = bootToDayVote(names, 5);
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
     const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
-    for (const n of names) if (n !== wolf) engine.castDayVote(ids[n]!, ids[wolf]!);
-
-    engine.tallyDayVoteAndProceed();
+    const votes: Record<string, string> = {};
+    for (const n of names) if (n !== wolf) votes[ids[n]!] = ids[wolf]!;
+    castDayVotesInOrder(engine, votes);
     // No point announcing a day-vote result on top of the game-over screen.
     expect(engine.getPhase()).toBe("ENDED");
   });
@@ -232,15 +232,11 @@ describe("TIE_REVOTE safety net (autoResolveTieRevoteIfPending)", () => {
     engine.endDayDiscussion();
 
     // Round 1 tie between C and D.
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.tallyDayVoteAndProceed(); // -> TIE_DEFENSE
+    castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! }); // -> TIE_DEFENSE
     engine.endTieDefense(); // -> DAY_VOTE round 2
 
     // Round 2 ties again on the same pair -> rule kicks in -> TIE_REVOTE.
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.tallyDayVoteAndProceed();
+    castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! });
 
     return { engine, ids };
   }

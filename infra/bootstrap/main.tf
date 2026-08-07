@@ -25,8 +25,14 @@ terraform {
   # Deliberately no "backend" block here — this stack's state lives locally.
 }
 
+variable "aws_region" {
+  description = "AWS region the state bucket + lock table (and everything else) live in."
+  type        = string
+  default     = "eu-west-3" # Paris — lowest latency for players in France
+}
+
 provider "aws" {
-  region = "eu-west-3" # Paris — lowest latency for players in France
+  region = var.aws_region
 
   default_tags {
     tags = {
@@ -37,9 +43,15 @@ provider "aws" {
   }
 }
 
+# S3 bucket names must be globally unique across ALL of AWS, not just your
+# account — so this can't be a fixed string (two different people running
+# this same repo would collide). The account ID is a cheap, guaranteed-unique
+# suffix that requires no input from whoever's running this.
+data "aws_caller_identity" "current" {}
+
 # S3 bucket to hold every other stack's state file.
 resource "aws_s3_bucket" "tf_state" {
-  bucket = "loupgarou-terraform-state-442932344443" # globally unique: account id suffix
+  bucket = "loupgarou-terraform-state-${data.aws_caller_identity.current.account_id}"
 
   lifecycle {
     prevent_destroy = true # refuse to destroy this even if you run `terraform destroy` here by mistake

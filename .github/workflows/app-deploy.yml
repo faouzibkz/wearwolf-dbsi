@@ -20,13 +20,22 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: eu-west-3
+  # AWS_REGION and SITE_URL are repo VARIABLES (Settings -> Secrets and
+  # variables -> Actions -> Variables), not hardcoded, because they're
+  # specific to whoever deployed this fork — hardcoding them here would
+  # mean anyone else's fork silently builds pointing at the original
+  # author's domain. scripts/deploy-aws.sh sets both automatically (via gh
+  # CLI) after the matching Terraform apply; AWS_REGION falls back to the
+  # project's own default region if unset, but SITE_URL deliberately does
+  # NOT fall back to anything — better to fail loudly (empty build arg)
+  # than silently ship a build wired to someone else's site.
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-3' }}
   ECR_WEB_REPOSITORY: loupgarou-web
   ECR_SERVER_REPOSITORY: loupgarou-server
   ECS_CLUSTER: loupgarou-cluster
   ECS_WEB_SERVICE: loupgarou-web
   ECS_SERVER_SERVICE: loupgarou-server
-  SITE_URL: https://loupgarou-dbsi.com
+  SITE_URL: ${{ vars.SITE_URL }}
 
 jobs:
   deploy:

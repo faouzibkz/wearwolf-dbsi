@@ -319,13 +319,25 @@ broader-permissioned CI role, since Terraform touches everything it manages).
 ./scripts/deploy-aws.sh
 ```
 
-Runs both Terraform stacks (pausing to show you each plan before applying), builds and pushes both
-images, and deploys — the same sequence described above, scripted end to end. Before running it on
-a **different** AWS account than the one this repo was originally deployed from, you must change two
-hardcoded, globally-unique values first: the S3 bucket name in `infra/bootstrap/main.tf` (S3 names
-are unique across all of AWS, not just your account) and the matching `bucket` in
-`infra/aws/backend.tf`. Also update `domain_name` in `infra/aws/variables.tf` to a domain you
-actually own.
+No file edits needed first — this works out of the box for anyone who clones the repo, on any AWS
+account. It checks you have `aws`/`terraform`/`docker` installed and that the AWS CLI is
+authenticated, prompts for your GitHub repo (`owner/repo`) and a domain you own with an existing
+Route53 hosted zone, then runs both Terraform stacks (pausing to show you each plan before
+applying), builds and pushes both images, and deploys.
+
+The state-backend S3 bucket name is derived from your AWS account ID automatically (`infra/bootstrap/main.tf`
+uses `data.aws_caller_identity`), and `infra/aws/backend.tf` reads that bucket/table back via
+`-backend-config` flags the script passes at `terraform init` time rather than a hardcoded value —
+so two different people running this same repo against two different AWS accounts never collide.
+`github_repository` and `domain_name` (`infra/aws/variables.tf`) both deliberately have no default,
+so there's no risk of accidentally deploying against the original author's repo or domain — the
+script prompts for both, or you can copy `infra/aws/terraform.tfvars.example` to
+`infra/aws/terraform.tfvars` and fill it in yourself if you'd rather run the Terraform commands by
+hand.
+
+If you have the GitHub CLI (`gh`) installed and logged in, the script also sets your repo's
+`AWS_APP_DEPLOY_ROLE_ARN` Actions variable for you automatically once Terraform creates the OIDC
+role; otherwise it prints the value and exactly where to paste it.
 
 ### Cost
 

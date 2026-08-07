@@ -25,7 +25,7 @@ export const voyanteRole: RoleModule = {
       // that same player is what reveals him as a wolf.
       result = timesInspected >= 2 ? "LOUP" : "NON_LOUP";
     } else {
-      result = target.roleId === "LOUP_GAROU" ? "LOUP" : "NON_LOUP";
+      result = target.roleId === "LOUP_GAROU" || target.roleId === "LOUP_VERT" ? "LOUP" : "NON_LOUP";
     }
 
     ctx.state.nightScratch!.voyanteInspections.push({

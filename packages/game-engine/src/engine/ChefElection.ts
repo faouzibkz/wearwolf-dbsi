@@ -34,8 +34,27 @@ export function castChefVote(ctx: EngineContext, voterId: string, candidateId: s
   if (chef.candidates.includes(voterId)) {
     throw new Error("Les candidats ne peuvent pas voter lors de l'élection du Chef.");
   }
+  // Same one-shot, locked vote as the day vote, and for the same reason:
+  // no changing your mind after the fact once it's been cast.
+  if (chef.votes.has(voterId)) {
+    throw new Error("Vous avez déjà voté — votre vote est verrouillé.");
+  }
   if (!chef.candidates.includes(candidateId)) throw new Error("Candidat invalide.");
   chef.votes.set(voterId, candidateId);
+}
+
+/**
+ * Live, unweighted tally of the current CHEF_VOTE (candidateId -> vote
+ * count) — same idea as VoteManager.computeLiveVoteTally, but no Chef
+ * double-vote bonus applies here since nobody is Chef yet at this point in
+ * the game. Never touches game state, safe to call anytime.
+ */
+export function computeLiveChefVoteTally(ctx: EngineContext): Record<string, number> {
+  const tally: Record<string, number> = {};
+  for (const candidateId of ctx.state.chef.votes.values()) {
+    tally[candidateId] = (tally[candidateId] ?? 0) + 1;
+  }
+  return tally;
 }
 
 export function tallyChefVote(ctx: EngineContext, rng: () => number = Math.random): string {

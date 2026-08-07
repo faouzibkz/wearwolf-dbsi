@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 function bootToNight1(names: string[], roleCounts: Record<string, number>, seed: number) {
   const engine = GameEngine.createGame({ roleCounts: roleCounts as any }, seededRng(seed));
@@ -45,9 +45,10 @@ describe("Loup Blanc plays as a plain Loup-Garou (pack kill vote only, no specia
     engine.resolveNightAndProceed();
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
-    for (const n of names) if (n !== wolf) engine.castDayVote(ids[n]!, ids[wolf]!);
-    const outcome = engine.tallyDayVoteAndProceed();
-    expect(outcome.eliminatedId).toBe(ids[wolf]);
+    const votes: Record<string, string> = {};
+    for (const n of names) if (n !== wolf) votes[ids[n]!] = ids[wolf]!;
+    const outcome = castDayVotesInOrder(engine, votes);
+    expect(outcome?.eliminatedId).toBe(ids[wolf]);
     expect(engine.getPhase()).toBe("DAY_VOTE_RESULT"); // brief announcement pause first
     engine.proceedFromDayVoteResultToNight();
     expect(engine.getPhase()).toBe("NIGHT"); // game continues, Loup Blanc still alive
@@ -65,7 +66,14 @@ describe("Loup Blanc plays as a plain Loup-Garou (pack kill vote only, no specia
     expect(engine.getPublicState().players.find((p) => p.id === ids[villager])!.isAlive).toBe(false);
   });
 
-  it("cannot target a fellow wolf (no devour power) or himself", () => {
+  it("CAN target a fellow wolf or himself (misdirection play — see wolfTeammatesAndSelfTarget.test.ts)", () => {
+    // Every alive player, including fellow wolves and yourself, is now a
+    // valid kill-vote target (wolfKillEligibleTargetIds in wolfPack.ts) —
+    // this used to be restricted, but the pack can deliberately "eat" one
+    // of its own as a misdirection play. See wolfTeammatesAndSelfTarget.test.ts
+    // for the dedicated coverage of that feature; this test just confirms
+    // the Loup Blanc specifically isn't singled out with some extra
+    // restriction on top of the shared wolf-pack targeting rules.
     const names = ["A", "B", "C", "D", "E", "F"];
     const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1, LOUP_BLANC: 1 }, 4);
     const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
@@ -74,11 +82,11 @@ describe("Loup Blanc plays as a plain Loup-Garou (pack kill vote only, no specia
 
     const prompts = engine.getNightPrompts();
     const myPrompt = prompts.find((p) => p.player.id === ids[loupBlanc]);
-    expect(myPrompt!.request.eligibleTargetIds).not.toContain(ids[wolf]);
-    expect(myPrompt!.request.eligibleTargetIds).not.toContain(ids[loupBlanc]);
+    expect(myPrompt!.request.eligibleTargetIds).toContain(ids[wolf]);
+    expect(myPrompt!.request.eligibleTargetIds).toContain(ids[loupBlanc]);
 
-    // The regular Loup-Garou's own prompt can't target the Loup Blanc either.
+    // The regular Loup-Garou's own prompt can target the Loup Blanc too.
     const wolfPrompt = prompts.find((p) => p.player.id === ids[wolf]);
-    expect(wolfPrompt!.request.eligibleTargetIds).not.toContain(ids[loupBlanc]);
+    expect(wolfPrompt!.request.eligibleTargetIds).toContain(ids[loupBlanc]);
   });
 });

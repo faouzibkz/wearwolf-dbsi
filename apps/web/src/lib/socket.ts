@@ -9,7 +9,12 @@ let socket: Socket | null = null;
 /** One shared Socket.IO connection per browser tab, created lazily on first use. */
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(SERVER_URL, { autoConnect: true, transports: ["websocket", "polling"] });
+    // withCredentials so the httpOnly session cookie set by /api/auth/*
+    // (see apps/server/src/auth/cookies.ts) actually rides along on the
+    // socket handshake — that's how PLAYER_JOIN/PLAYER_RECONNECT know which
+    // account is behind this connection, with no token ever touching a
+    // socket payload.
+    socket = io(SERVER_URL, { autoConnect: true, transports: ["websocket", "polling"], withCredentials: true });
   }
   return socket;
 }

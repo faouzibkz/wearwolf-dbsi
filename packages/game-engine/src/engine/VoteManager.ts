@@ -22,7 +22,12 @@ export interface DayVoteOutcome {
 function chefVoteWeight(ctx: EngineContext, voterId: string): number {
   const voter = ctx.getPlayer(voterId);
   const aliveCount = ctx.getAlivePlayers().length;
-  const bonusActive = aliveCount > ctx.state.config.chefVoteBonusThreshold;
+  // The double-vote bonus only applies to round 1 of a day vote. Once a tie
+  // sends things to TIE_DEFENSE and a re-vote (round 2, 3, ...), every vote
+  // — including the Chef's — counts equally: the bonus's job is to help
+  // avoid ties in the first place, not to keep tipping the scales once an
+  // actual tie-break is already underway.
+  const bonusActive = ctx.state.dayVote.round === 1 && aliveCount > ctx.state.config.chefVoteBonusThreshold;
   return voter.isChef && bonusActive ? 2 : 1;
 }
 
@@ -45,6 +50,22 @@ export function computeLiveVoteTally(ctx: EngineContext): Record<string, number>
 export function castDayVote(ctx: EngineContext, voterId: string, targetId: string): void {
   const voter = ctx.getPlayer(voterId);
   if (!voter.isAlive) throw new Error("Un joueur mort ne peut pas voter.");
+  // The vote is now a per-player turn queue (DayVoteQueue.ts), not a free-
+  // for-all — only whoever's turn it currently is may cast right now.
+  if (ctx.state.dayVoteQueue) {
+    const currentVoterId = ctx.state.dayVoteQueue.order[ctx.state.dayVoteQueue.currentSpeakerIndex] ?? null;
+    if (currentVoterId !== voterId) {
+      throw new Error("Ce n'est pas votre tour de voter.");
+    }
+  }
+  // One vote per player per round, locked — prevents last-second bandwagon
+  // flips and rage-clicking. A player DOES get a fresh vote each new round
+  // (dayVote.votes is cleared whenever a round advances — see tallyDayVote
+  // and resetDayVote below), so this only blocks changing your mind within
+  // the SAME round, not voting again after a tie reopens the ballot.
+  if (ctx.state.dayVote.votes.has(voterId)) {
+    throw new Error("Vous avez déjà voté — votre vote est verrouillé pour ce tour.");
+  }
   const target = ctx.getPlayer(targetId);
   const eligibleIds =
     ctx.state.dayVote.round === 1

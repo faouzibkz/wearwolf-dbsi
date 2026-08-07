@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 function bootToDayVote(names: string[], seed: number) {
   const engine = GameEngine.createGame({ roleCounts: { LOUP_GAROU: 1 } }, seededRng(seed));
@@ -21,36 +21,55 @@ function bootToDayVote(names: string[], seed: number) {
 }
 
 describe("day vote is a live, open ballot", () => {
-  it("exposes every cast vote (voterId -> targetId) during DAY_VOTE, live as votes come in", () => {
+  it("exposes every cast vote (voterId -> targetId) during DAY_VOTE, live as votes come in, and locks each vote after it's cast", () => {
     const names = ["A", "B", "C", "D", "E"];
     const { engine, ids } = bootToDayVote(names, 5);
 
     expect(engine.getPublicState().dayVotes).toEqual({});
 
-    engine.castDayVote(ids.A!, ids.C!);
-    expect(engine.getPublicState().dayVotes).toEqual({ [ids.A!]: ids.C! });
+    // The vote is now a turn queue, not a free-for-all — ask the engine
+    // who's actually up rather than assuming it's A, then B.
+    const voter1 = engine.getCurrentDayVoterId()!;
+    engine.castDayVote(voter1, ids.C!);
+    expect(engine.getPublicState().dayVotes).toEqual({ [voter1]: ids.C! });
 
-    engine.castDayVote(ids.B!, ids.C!);
-    expect(engine.getPublicState().dayVotes).toEqual({ [ids.A!]: ids.C!, [ids.B!]: ids.C! });
+    const voter2 = engine.getCurrentDayVoterId()!;
+    engine.castDayVote(voter2, ids.C!);
+    expect(engine.getPublicState().dayVotes).toEqual({ [voter1]: ids.C!, [voter2]: ids.C! });
 
-    // Changing your mind updates your entry live, not adds a second one.
-    engine.castDayVote(ids.A!, ids.D!);
-    expect(engine.getPublicState().dayVotes).toEqual({ [ids.A!]: ids.D!, [ids.B!]: ids.C! });
+    // One vote per player per round, locked — no changing your mind once
+    // cast (prevents last-second bandwagon flips / rage-clicking). Also no
+    // longer this voter's turn, which throws for the same reason.
+    expect(() => engine.castDayVote(voter1, ids.D!)).toThrow();
+    expect(engine.getPublicState().dayVotes).toEqual({ [voter1]: ids.C!, [voter2]: ids.C! });
+  });
+
+  it("rejects a vote cast out of turn", () => {
+    const names = ["A", "B", "C", "D", "E"];
+    const { engine, ids } = bootToDayVote(names, 5);
+
+    const current = engine.getCurrentDayVoterId()!;
+    const outOfTurnVoter = names.map((n) => ids[n]!).find((id) => id !== current)!;
+    expect(() => engine.castDayVote(outOfTurnVoter, ids.C!)).toThrow(/tour/);
   });
 
   it("never leaks votes outside the DAY_VOTE phase (not during TIE_DEFENSE, not after resolution)", () => {
     const names = ["A", "B", "C", "D", "E"];
     const { engine, ids } = bootToDayVote(names, 5);
 
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.castDayVote(ids.C!, ids.C!);
-    engine.castDayVote(ids.D!, ids.D!);
-    engine.castDayVote(ids.E!, ids.C!);
     // C: A,C,E = 3 votes; D: B,D = 2 votes -> no tie, C is eliminated.
-    const outcome = engine.tallyDayVoteAndProceed();
+    // Casting the last (Chef-equivalent, here just the queue's final) turn
+    // auto-triggers the tally, so the outcome comes back from
+    // castDayVotesInOrder itself rather than a separate tallyDayVoteAndProceed() call.
+    const outcome = castDayVotesInOrder(engine, {
+      [ids.A!]: ids.C!,
+      [ids.B!]: ids.D!,
+      [ids.C!]: ids.C!,
+      [ids.D!]: ids.D!,
+      [ids.E!]: ids.C!,
+    });
 
-    expect(outcome.eliminatedId).toBe(ids.C);
+    expect(outcome?.eliminatedId).toBe(ids.C);
     // We're in DAY_VOTE_RESULT now (the announcement pause before night
     // falls) — no stale votes should still be exposed.
     expect(engine.getPublicState().dayVotes).toEqual({});
@@ -60,13 +79,14 @@ describe("day vote is a live, open ballot", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
 
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.castDayVote(ids.C!, ids.C!);
-    engine.castDayVote(ids.D!, ids.D!);
     // C: A,C = 2; D: B,D = 2 -> tie, round 1.
-    const outcome = engine.tallyDayVoteAndProceed();
-    expect(outcome.awaitingAnotherRound).toBe(true);
+    const outcome = castDayVotesInOrder(engine, {
+      [ids.A!]: ids.C!,
+      [ids.B!]: ids.D!,
+      [ids.C!]: ids.C!,
+      [ids.D!]: ids.D!,
+    });
+    expect(outcome?.awaitingAnotherRound).toBe(true);
     expect(engine.getPublicState().phase).toBe("TIE_DEFENSE");
     expect(engine.getPublicState().dayVotes).toEqual({});
 
@@ -79,8 +99,9 @@ describe("day vote is a live, open ballot", () => {
     expect(engine.getPublicState().dayVoteTally).toEqual({});
 
     // Once someone actually casts a round-2 vote, it shows up normally.
-    engine.castDayVote(ids.A!, ids.C!);
-    expect(engine.getPublicState().dayVotes).toEqual({ [ids.A!]: ids.C! });
+    const voter = engine.getCurrentDayVoterId()!;
+    engine.castDayVote(voter, ids.C!);
+    expect(engine.getPublicState().dayVotes).toEqual({ [voter]: ids.C! });
   });
 });
 
@@ -90,14 +111,19 @@ describe("Chef's vote weight in the live tally", () => {
     const names = ["Chef", "B", "C", "D", "E", "F", "G"];
     const { engine, ids } = bootToDayVote(names, 3);
 
-    engine.castDayVote(ids.Chef!, ids.C!);
-    expect(engine.getPublicState().dayVoteTally).toEqual({ [ids.C!]: 2 });
-    // Raw voter list still shows just the one voter — the "2" is weight,
-    // not a phantom second voter.
-    expect(engine.getPublicState().dayVotes).toEqual({ [ids.Chef!]: ids.C! });
+    // D gets two unweighted votes (weight 2). The Chef votes alone for E —
+    // if the bonus is active, that single vote counts as weight 2 too,
+    // producing a tie; if it only counted as 1, E would simply lose. F and
+    // G don't vote (timeout). Order doesn't matter here — castDayVotesInOrder
+    // walks whoever's turn it actually is regardless of map key order.
+    const outcome = castDayVotesInOrder(engine, {
+      [ids.B!]: ids.D!,
+      [ids.C!]: ids.D!,
+      [ids.Chef!]: ids.E!,
+    });
 
-    engine.castDayVote(ids.B!, ids.C!);
-    expect(engine.getPublicState().dayVoteTally).toEqual({ [ids.C!]: 3 }); // 2 (Chef) + 1 (B)
+    expect(outcome?.tie).toBe(true);
+    expect(new Set(outcome?.tiedIds)).toEqual(new Set([ids.D!, ids.E!]));
   });
 
   it("drops the Chef's vote back to weight 1 once alive count falls to the threshold", () => {
@@ -110,20 +136,34 @@ describe("Chef's vote weight in the live tally", () => {
     // requires strictly > threshold so it should now be inactive).
     const targetId = names.map((n) => ids[n]!).find((id) => id !== ids.Chef && id !== wolfId)!;
 
+    const votesByVoterId: Record<string, string> = {};
     for (const n of names) {
       const voterId = ids[n]!;
-      if (voterId !== targetId) engine.castDayVote(voterId, targetId);
+      if (voterId !== targetId) votesByVoterId[voterId] = targetId;
     }
-    const outcome = engine.tallyDayVoteAndProceed();
-    expect(outcome.eliminatedId).toBe(targetId);
+    const roundOneOutcome = castDayVotesInOrder(engine, votesByVoterId);
+    expect(roundOneOutcome?.eliminatedId).toBe(targetId);
 
     engine.proceedFromDayVoteResultToNight();
     engine.resolveNightAndProceed();
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
 
-    const nextTargetId = names.map((n) => ids[n]!).find((id) => id !== ids.Chef && id !== targetId)!;
-    engine.castDayVote(ids.Chef!, nextTargetId);
-    expect(engine.getPublicState().dayVoteTally).toEqual({ [nextTargetId]: 1 });
+    // 6 alive now, exactly at chefVoteBonusThreshold -> bonus inactive.
+    // Two non-Chef players give a third player a clean weight-2 vote; the
+    // Chef votes alone for a fourth player. If the bonus were still active
+    // that would tie (2 vs 2); since it's inactive the Chef's pick only
+    // reaches weight 1 and the other target wins outright instead.
+    const aliveNonChef = names.map((n) => ids[n]!).filter((id) => id !== targetId && id !== ids.Chef);
+    const [voterX, voterY, otherTargetId, nextTargetId] = aliveNonChef;
+
+    const round2Outcome = castDayVotesInOrder(engine, {
+      [voterX!]: otherTargetId!,
+      [voterY!]: otherTargetId!,
+      [ids.Chef!]: nextTargetId!,
+    });
+
+    expect(round2Outcome?.tie).toBe(false);
+    expect(round2Outcome?.eliminatedId).toBe(otherTargetId);
   });
 });

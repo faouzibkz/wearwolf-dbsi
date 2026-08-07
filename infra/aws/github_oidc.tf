@@ -40,7 +40,24 @@ resource "aws_iam_role" "github_actions_app_deploy" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/master"
+        }
+        StringLike = {
+          # GitHub rolled out "immutable subject claims" on 2026-07-15: repos
+          # created on/after that date get a `sub` claim shaped like
+          # `repo:owner@ownerID/repo@repoID:ref:...` instead of the legacy
+          # `repo:owner/repo:ref:...`. Which format applies depends on when
+          # THIS repo was created and isn't knowable until it exists, so
+          # rather than hardcoding one specific numeric owner/repo ID (which
+          # would only ever match one specific clone of this repo), a `*`
+          # wildcard on the ID portion matches either format for ANY repo —
+          # no manual lookup step needed to make this reusable. Still scoped
+          # to exactly this repo's name and branch: GitHub itself issues the
+          # sub claim, so a wildcarded ID can't be used to impersonate a
+          # differently-named repo.
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repository}:ref:refs/heads/master",
+            "repo:${split("/", var.github_repository)[0]}@*/${split("/", var.github_repository)[1]}@*:ref:refs/heads/master",
+          ]
         }
       }
     }]

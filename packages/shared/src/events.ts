@@ -7,6 +7,19 @@ import type {
   RoleId,
 } from "./types";
 
+/** Payload for ROLE_ASSIGNED — sent once at game start and again on every reconnect. */
+export interface RoleAssignedPayload {
+  playerId: string;
+  roleId: RoleId;
+  /**
+   * Fellow wolf-team players (LOUP_GAROU + LOUP_BLANC, alive at the time of
+   * sending), so the pack knows each other from the very start instead of
+   * only discovering it once the wolf room opens on night 1. Always an
+   * empty array for non-wolf roles.
+   */
+  wolfTeammates: { id: string; nickname: string }[];
+}
+
 /**
  * Socket.IO event name constants. Using constants (instead of raw strings)
  * throughout server + client means a typo becomes a compile error instead
@@ -48,8 +61,17 @@ export const SOCKET_EVENTS = {
   // --- chef election ---
   CHEF_VOLUNTEER: "chef:volunteer",
   CHEF_DEBATE_NEXT_SPEAKER: "chef:nextSpeaker",
+  // Self-serve version of the above: the candidate currently speaking can
+  // end their own turn early, same pattern as DAY_DISCUSSION_PASS_TURN.
+  CHEF_DEBATE_PASS_TURN: "chef:passTurn",
   CHEF_VOTE_CAST: "chef:voteCast",
   CHEF_ELECTED: "chef:elected",
+
+  // --- chef manual "skip to next phase" (self-serve equivalent of
+  // ADMIN_FORCE_NEXT_PHASE, available only to whoever is currently the
+  // elected Chef du village — transfers automatically on succession since
+  // it's checked against the live chefId at click time, not cached) ---
+  CHEF_FORCE_NEXT_PHASE: "chef:forceNextPhase",
 
   // --- chef succession (triggered when the elected Chef dies) ---
   CHEF_SUCCESSION_PROMPT: "chef:successionPrompt", // server -> the now-dead ex-Chef only
@@ -87,6 +109,54 @@ export const SOCKET_EVENTS = {
   // --- chasseur ---
   CHASSEUR_PROMPT: "chasseur:prompt",
   CHASSEUR_SHOOT: "chasseur:shoot",
+
+  // --- loup vert (plays with the pack via the normal NIGHT_PROMPT/
+  // NIGHT_ACTION_SUBMIT channel like any other wolf; these are his TWO
+  // extra, independent night actions on top of that: guessing a villager's
+  // role, and — only once he's guessed correctly — using the power he
+  // stole for that one night. Both need their own channel because a
+  // player can only have one "pending" prompt at a time in the standard
+  // NIGHT_PROMPT system, and the Loup Vert needs up to three simultaneous
+  // things tonight: the pack's kill vote, his guess, and (maybe) a
+  // borrowed power.) ---
+  LOUP_VERT_GUESS_PROMPT: "loupVert:guessPrompt",
+  LOUP_VERT_GUESS_SUBMIT: "loupVert:guessSubmit",
+  LOUP_VERT_STOLEN_POWER_PROMPT: "loupVert:stolenPowerPrompt",
+  LOUP_VERT_STOLEN_POWER_SUBMIT: "loupVert:stolenPowerSubmit",
+
+  // --- barbie (one-shot day-discussion reveal) ---
+  BARBIE_REVEAL_SUBMIT: "barbie:revealSubmit",
+  // Broadcast to the whole room so every client can play the reveal
+  // animation in sync, not just tell Barbie's own client what happened.
+  BARBIE_REVEAL_RESULT: "barbie:revealResult",
+
+  // --- chef's optional second-debate bonus round (CHEF_SECOND_DEBATE) ---
+  CHEF_SECOND_DEBATE_CHOOSE: "chef:secondDebateChoose",
+  // Self-serve pass-turn during a bonus speaker's own turn, same pattern as DAY_DISCUSSION_PASS_TURN.
+  CHEF_SECOND_DEBATE_PASS_TURN: "chef:secondDebatePassTurn",
+
+  // --- alien's day-time interrupt: force the day to end immediately and
+  // jump straight to a normal night (any day, including day 1), skipping
+  // whatever's left of discussion, the Chef's second debate, and that
+  // day's vote. Deliberately unattributed to anyone watching — see
+  // GameEngine.triggerAlienNightfall. ---
+  ALIEN_FORCE_NIGHTFALL: "alien:forceNightfall",
+
+  // --- clock sync: a lightweight, game-independent round trip the client
+  // uses to measure how far its own clock is from the server's, so every
+  // countdown (CountdownTimer) can be anchored to the SERVER's clock
+  // instead of the browser's raw Date.now() — otherwise any client/server
+  // clock drift (e.g. a laptop's Docker/WSL2 VM clock after waking from
+  // sleep) makes a perfectly-on-schedule server look like its timers are
+  // stuck at 0:00 for several seconds before actually acting. ---
+  TIME_SYNC: "time:sync",
+
+  // --- private, role-specific extras that aren't part of the public state
+  // (Barbie's own "have I used my power yet", Alien's remaining guess
+  // chances, Loup Vert's stolen-power status) — pushed to a player's own
+  // room alongside every other state update, always safe since it never
+  // reveals anything to anyone but the player it's about. ---
+  PRIVATE_ROLE_STATE: "player:privateRoleState",
 
   // --- end game ---
   GAME_ENDED: "game:ended",
@@ -186,6 +256,8 @@ export interface NightActionSubmitPayload {
   roleId: RoleId;
   actionType: string;
   targetId?: string;
+  /** Only used by the Alien's "ALIEN_GUESS" action — which role he's claiming targetId holds. */
+  guessedRoleId?: RoleId;
 }
 
 export interface NightPromptPayload {
@@ -193,9 +265,73 @@ export interface NightPromptPayload {
   actionType: string;
   /** ids of players this action may legally target */
   eligibleTargetIds: string[];
-  /** e.g. sorciere sees who was attacked */
+  /** e.g. sorciere sees who was attacked; the Alien's ALIEN_GUESS prompt carries guessableRoleIds + remaining chances here */
   context?: Record<string, unknown>;
   deadlineAt: number;
+}
+
+export interface LoupVertGuessPromptPayload {
+  eligibleTargetIds: string[];
+  /** Village-team role ids he may claim a target holds. */
+  guessableRoleIds: RoleId[];
+  deadlineAt: number;
+}
+
+export interface LoupVertGuessSubmitPayload {
+  playerId: string;
+  targetId: string;
+  guessedRoleId: RoleId;
+}
+
+/**
+ * The stolen-power prompt/submit reuse NightPromptPayload's exact shape —
+ * once the Loup Vert has correctly guessed an active-power role, the
+ * server hands him the SAME kind of prompt the real role-holder would have
+ * gotten (SORCIERE_ACT, PROTECT, INSPECT, or MARK), so the client's
+ * existing NightPromptPanel renders it with no new UI code.
+ */
+export interface LoupVertStolenPowerSubmitPayload {
+  playerId: string;
+  actionType: string;
+  targetId?: string;
+}
+
+export interface BarbieRevealSubmitPayload {
+  playerId: string;
+  targetId: string;
+}
+
+export interface BarbieRevealResultPayload {
+  barbieId: string;
+  barbieNickname: string;
+  targetId: string;
+  targetNickname: string;
+  targetRoleId: RoleId;
+  outcome: "WOLF_DIED_BARBIE_CHEF" | "BOTH_DIED";
+  /** Set only for the WOLF_DIED_BARBIE_CHEF outcome. */
+  newChefId: string | null;
+}
+
+export interface ChefSecondDebateChoosePayload {
+  /** 0..GameConfig.secondDebateSlots alive player ids, in the order they'll speak. */
+  playerIds: string[];
+}
+
+/**
+ * Role-specific private extras, sent only to the player they're about —
+ * never broadcast. Fields are present only for the role they apply to.
+ */
+export interface PrivateRoleStatePayload {
+  /** BARBIE only. */
+  barbiePowerAvailable?: boolean;
+  /** ALIEN only. */
+  alienChances?: { village: number; wolf: number };
+  /** ALIEN only: can he force nightfall right now (alive + currently in a day discussion)? */
+  alienCanForceNightfall?: boolean;
+  /** LOUP_VERT only: does he currently hold the permanent Chasseur trigger? */
+  loupVertHasChasseurPower?: boolean;
+  /** LOUP_VERT only: which role's power (if any) he's holding for tonight only. */
+  loupVertStolenPowerRoleId?: RoleId | null;
 }
 
 export interface WolfChatSendPayload {
@@ -245,4 +381,9 @@ export interface AdminStatePayload {
 
 export interface GameEndedPayload {
   stats: EndGameStats;
+}
+
+/** Ack response for TIME_SYNC — see the SOCKET_EVENTS.TIME_SYNC comment. */
+export interface TimeSyncResultPayload {
+  serverNow: number;
 }

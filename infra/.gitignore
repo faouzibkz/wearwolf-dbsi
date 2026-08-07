@@ -13,3 +13,8 @@ terraform.rc
 
 # .terraform.lock.hcl is intentionally NOT ignored — it should be committed
 # so everyone (and CI) resolves the exact same provider versions.
+
+# Real per-deployer values (your repo, your domain) — never commit these.
+# terraform.tfvars.example (note: NOT matched by this pattern) stays committed.
+*.tfvars
+!*.tfvars.example

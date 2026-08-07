@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { NightPromptPayload, PlayerPublic } from "@loupgarou/shared";
+import { ROLE_METADATA, type NightPromptPayload, type PlayerPublic, type RoleId } from "@loupgarou/shared";
 import { PlayerList } from "./PlayerList";
 import { CountdownTimer } from "./CountdownTimer";
 
@@ -12,6 +12,7 @@ const ACTION_LABELS: Record<string, string> = {
   SORCIERE_ACT: "Les loups ont choisi une victime. Que faites-vous ?",
   MARK: "Désignez un joueur qui recevra +2 votes demain.",
   CHOOSE_FATHER: "Choisissez en secret le joueur qui sera votre « père ».",
+  ALIEN_GUESS: "Devinez le rôle exact d'un joueur (facultatif).",
 };
 
 export function NightPromptPanel({
@@ -21,7 +22,7 @@ export function NightPromptPanel({
 }: {
   prompt: NightPromptPayload;
   players: PlayerPublic[];
-  onSubmit: (actionType: string, targetId?: string) => void;
+  onSubmit: (actionType: string, targetId?: string, guessedRoleId?: RoleId) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [sentChoice, setSentChoice] = useState<{ label: string } | null>(null);
@@ -35,6 +36,64 @@ export function NightPromptPanel({
           Votre choix : <strong className="text-blood-300">{sentChoice.label}</strong>
         </p>
         <p className="text-sm mt-1">En attente de la résolution de la nuit…</p>
+      </div>
+    );
+  }
+
+  if (prompt.actionType === "ALIEN_GUESS") {
+    const ctx = prompt.context as {
+      guessableRoleIds: RoleId[];
+      villageChancesLeft: number;
+      wolfChancesLeft: number;
+    };
+    const target = eligible.find((p) => p.id === selected);
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <p className="text-sm text-night-100/80">{ACTION_LABELS.ALIEN_GUESS}</p>
+        <p className="text-xs text-night-100/50">
+          Chances restantes — village : <strong className="text-gold-300">{ctx.villageChancesLeft}</strong>{" "}
+          · loups : <strong className="text-blood-300">{ctx.wolfChancesLeft}</strong>. Une mauvaise
+          pioche dans une catégorie déjà à 0 vous est fatale.
+        </p>
+        {!target ? (
+          <>
+            <p className="text-xs text-night-100/60">1. Choisissez une cible.</p>
+            <PlayerList players={eligible} selectable selectedId={selected} onSelect={setSelected} />
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-night-100/60">
+              2. Quel rôle pensez-vous que <strong className="text-gold-300">{target.nickname}</strong> a ?
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {ctx.guessableRoleIds.map((roleId) => (
+                <button
+                  key={roleId}
+                  className="btn-secondary text-sm"
+                  onClick={() => {
+                    onSubmit("ALIEN_GUESS", target.id, roleId);
+                    setSentChoice({ label: `${target.nickname} → ${ROLE_METADATA[roleId].displayName}` });
+                  }}
+                >
+                  {ROLE_METADATA[roleId].displayName}
+                </button>
+              ))}
+            </div>
+            <button className="btn-secondary text-xs" onClick={() => setSelected(null)}>
+              ← Changer de cible
+            </button>
+          </>
+        )}
+        <button
+          className="btn-secondary w-full text-sm"
+          onClick={() => {
+            onSubmit("SKIP");
+            setSentChoice({ label: "Aucune tentative cette nuit" });
+          }}
+        >
+          Ne rien tenter cette nuit
+        </button>
+        <CountdownTimer endsAt={prompt.deadlineAt} />
       </div>
     );
   }

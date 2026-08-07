@@ -88,7 +88,7 @@ describe("Day discussion speaking order", () => {
     expect(order).toHaveLength(names.length);
   });
 
-  it("auto-transitions DAY_DISCUSSION -> DAY_VOTE once the Chef's closing turn ends", () => {
+  it("auto-transitions DAY_DISCUSSION -> CHEF_SECOND_DEBATE once the Chef's closing turn ends", () => {
     const names = ["Chef", "B", "C", "D", "E"];
     const { engine } = bootWithElectedChef(names, { LOUP_GAROU: 1 }, 1);
     engine.endDay1Discussion();
@@ -98,6 +98,13 @@ describe("Day discussion speaking order", () => {
     const order = engine.getPublicState().dayDiscussionOrder!;
     for (let i = 1; i <= order.length; i++) engine.advanceDaySpeaker();
 
+    // Not DAY_VOTE directly: the Chef gets first crack at an optional
+    // second-debate bonus round (see secondDebate.test.ts) before the vote opens.
+    expect(engine.getPhase()).toBe("CHEF_SECOND_DEBATE");
+    expect(engine.isSecondDebateChoicePending()).toBe(true);
+
+    // Choosing nobody moves straight on to the vote, same as before.
+    engine.chooseSecondDebateSpeakers([]);
     expect(engine.getPhase()).toBe("DAY_VOTE");
   });
 

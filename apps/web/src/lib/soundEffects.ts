@@ -88,8 +88,15 @@ export function playChefFanfare(enabled: boolean): void {
   [523, 784, 1046].forEach((freq, i) => tone(ctx, freq, now + i * 0.09, 0.3, "triangle", 0.14));
 }
 
-/** Game over: a short arpeggio, brighter for the village, darker for the wolves. */
-export function playVictoryFanfare(enabled: boolean, winner: "VILLAGE" | "LOUPS"): void {
+/**
+ * Game over: a short arpeggio, brighter for the village, darker for the
+ * wolves. `winner` is typed as the full `Team` (which also includes
+ * "SOLO" for the Alien) even though the Alien never actually wins — see
+ * VictoryConditions.ts — so the only way this ever sees "SOLO" is the rare
+ * stalemate ending where he's the last one standing; that case reuses the
+ * darker wolves motif below rather than getting a third bespoke sound.
+ */
+export function playVictoryFanfare(enabled: boolean, winner: "VILLAGE" | "LOUPS" | "SOLO"): void {
   if (!enabled) return;
   const ctx = getCtx();
   if (!ctx) return;

@@ -16,6 +16,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/**
+ * A permanent player account (Phase 1 of the "comptes / profils / stats"
+ * spec). This is the identity that stats, history and (later) rating are
+ * always attached to — NEVER the per-game nickname on PlayerRecord, which
+ * stays purely cosmetic and disposable. See PlayerRecord.userId.
+ */
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  email        String?  @unique
+  passwordHash String
+  /** Shown on the profile/leaderboards; distinct from `username` (the login handle) so it can be changed more freely later without breaking logins. Defaults to `username` at signup. */
+  displayName  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  playerRecords PlayerRecord[]
+}
+
 model Game {
   id          String   @id @default(uuid())
   code        String   @unique
@@ -38,14 +57,35 @@ model PlayerRecord {
   id           String   @id @default(uuid())
   game         Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
   gameId       String
+  /** GameEngine's own player id (InternalPlayer.id) — distinct from this row's own `id` PK. Lets finalizeGameHistory() upsert idempotently instead of risking duplicate rows if it's ever invoked twice for the same game. */
+  enginePlayerId String
+  /** The temporary per-game pseudo (section 2 of the spec) — cosmetic only, never used for stats/rating/history lookups. Those all key off `userId`. */
   nickname     String
   roleId       String
   isAlive      Boolean  @default(true)
   isChef       Boolean  @default(false)
   deathCause   String?
+  /** Human-readable "Nuit N" / "Jour N" moment of death, or null if he survived to the end. */
+  deathMoment  String?
+  /** This player's team AT THE END of the game (a role like Mowgli can change team mid-game) — see ROLE_METADATA / GameEngine.getFinalPlayerSummaries(). */
+  team         String?
+  /** "WON" | "LOST" | "DRAW" | null while the game is still in progress. Computed once, at game end, from team vs. Game.winner. */
+  result       String?
   joinedAt     DateTime @default(now())
 
+  /**
+   * Nullable: a handful of legacy PlayerRecord rows (written before accounts
+   * existed) or a guest who somehow bypassed the join-gate can have no
+   * account attached — they just never show up in anyone's stats/history.
+   * onDelete: SetNull so deleting an account doesn't blow away the historical
+   * game record for the other players who WERE in that game.
+   */
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
+  @@unique([gameId, enginePlayerId])
   @@index([gameId])
+  @@index([userId])
 }
 
 model GameLogEntry {

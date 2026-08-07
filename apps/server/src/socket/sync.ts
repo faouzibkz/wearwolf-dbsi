@@ -1,6 +1,14 @@
 import type { Server } from "socket.io";
 import type { GameEngine } from "@loupgarou/game-engine";
-import { broadcastGameState, pushChasseurPrompts, pushChefSuccessionPrompt, pushNightPrompts } from "./broadcast.js";
+import {
+  broadcastGameState,
+  pushChasseurPrompts,
+  pushChefSuccessionPrompt,
+  pushLoupVertGuessPrompts,
+  pushLoupVertStolenPowerPrompts,
+  pushNightPrompts,
+  pushPrivateRoleState,
+} from "./broadcast.js";
 import { pushWolfRoomState } from "./wolfRoom.js";
 
 /**
@@ -22,7 +30,12 @@ export function pushAllPrompts(io: Server, engine: GameEngine): void {
   pushChasseurPrompts(io, engine);
   pushChefSuccessionPrompt(io, engine);
   if (engine.getPhase() === "NIGHT") {
-    pushNightPrompts(io, engine);
+    pushNightPrompts(io, engine); // includes the Alien's ALIEN_GUESS prompt — standard channel, one action/night
     pushWolfRoomState(io, engine);
+    pushLoupVertGuessPrompts(io, engine);
+    pushLoupVertStolenPowerPrompts(io, engine);
   }
+  // Resource counters (Barbie's power-available flag, Alien's chances,
+  // Loup Vert's stolen-power status) — private to each player, phase-agnostic.
+  pushPrivateRoleState(io, engine);
 }

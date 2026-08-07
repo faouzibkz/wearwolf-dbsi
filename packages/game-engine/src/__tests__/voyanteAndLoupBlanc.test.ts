@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 function bootToNight1(names: string[], roleCounts: Record<string, number>, seed: number) {
   const engine = GameEngine.createGame({ roleCounts: roleCounts as any }, seededRng(seed));
@@ -71,10 +71,9 @@ describe("Loup Blanc house rule: cover holds on first inspection, breaks on seco
     engine.resolveNightAndProceed();
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
-    for (const n of names) {
-      if (n !== bystander) engine.castDayVote(ids[n]!, ids[bystander]!);
-    }
-    engine.tallyDayVoteAndProceed();
+    const votes: Record<string, string> = {};
+    for (const n of names) if (n !== bystander) votes[ids[n]!] = ids[bystander]!;
+    castDayVotesInOrder(engine, votes);
     engine.proceedFromDayVoteResultToNight();
 
     engine.submitNightAction(ids[voyante]!, "INSPECT", ids[loupBlanc]!);

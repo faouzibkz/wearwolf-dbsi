@@ -14,12 +14,15 @@ export const ROLE_IDS = [
   "VILLAGEOIS",
   "LOUP_GAROU",
   "LOUP_BLANC",
+  "LOUP_VERT",
   "SORCIERE",
   "VOYANTE",
   "SALVATEUR",
   "CHASSEUR",
   "CORBEAU",
   "MOWGLI",
+  "BARBIE",
+  "ALIEN",
 ] as const;
 
 export type RoleId = (typeof ROLE_IDS)[number];
@@ -30,7 +33,14 @@ export type RoleId = (typeof ROLE_IDS)[number];
  */
 export const CHEF_TITLE = "CHEF_DU_VILLAGE" as const;
 
-export type Team = "VILLAGE" | "LOUPS";
+/**
+ * "SOLO" is the Alien's team: he plays against both Village and Loups and
+ * never appears as a `winner` (see VictoryConditions.ts — he's deliberately
+ * excluded from both the wolf-parity and all-wolves-dead counts, so his
+ * presence never changes who wins between the other two teams). It only
+ * shows up here for descriptive purposes (role card badge, etc).
+ */
+export type Team = "VILLAGE" | "LOUPS" | "SOLO";
 
 /**
  * Every phase the game state machine can be in.
@@ -52,6 +62,15 @@ export const PHASES = [
   "NIGHT",
   "MORNING",
   "DAY_DISCUSSION",
+  /**
+   * Optional bonus round the Chef alone can trigger, right after the normal
+   * discussion order finishes (including his own closing word) and before
+   * the day vote opens: he may hand up to `secondDebateSlots` chosen
+   * players one more speaking turn each. He can also pick nobody, in which
+   * case this phase is a no-op pass-through straight to DAY_VOTE. See
+   * engine/SecondDebate.ts.
+   */
+  "CHEF_SECOND_DEBATE",
   "DAY_VOTE",
   "DAY_VOTE_RESULT",
   "TIE_DEFENSE",
@@ -81,6 +100,7 @@ export interface TimerConfig {
   dayDiscussion: number;
   night: number;
   tieDefense: number;
+  /** Per voter (the day vote is a per-player turn queue, not simultaneous — see DayVoteQueue.ts), not for the whole phase. */
   dayVote: number;
   /** How long CHEF_CANDIDACY waits for volunteers before auto-picking a random Chef. */
   chefCandidacy: number;
@@ -98,6 +118,14 @@ export interface TimerConfig {
   tieRevote: number;
 }
 
+/**
+ * CHEF_SECOND_DEBATE (the Chef's optional bonus-turn round) deliberately
+ * reuses `TimerConfig.dayDiscussion` for both the Chef's initial "who gets
+ * a bonus turn" choice window and each chosen player's actual bonus turn —
+ * not a separate timer config, so there's one fewer number to tune and it
+ * stays proportional to however long a normal turn already is.
+ */
+
 export const DEFAULT_TIMERS: TimerConfig = {
   chefDebate: 120,
   chefVote: 45,
@@ -107,7 +135,7 @@ export const DEFAULT_TIMERS: TimerConfig = {
   // Per tied player (a defense speech isn't as long as a full debate turn),
   // now that TIE_DEFENSE has its own randomly-ordered speaker queue.
   tieDefense: 60,
-  dayVote: 45,
+  dayVote: 10, // per voter, not the whole phase — see the TimerConfig.dayVote comment
   chefCandidacy: 45,
   chefReveal: 5,
   morningReveal: 7,
@@ -127,6 +155,13 @@ export interface GameConfig {
   tieResolutionRule: TieResolutionRule;
   /** once alive player count is <= this, the Chef's vote bonus is disabled */
   chefVoteBonusThreshold: number;
+  /**
+   * Max number of players the Chef may grant a bonus speaking turn during
+   * CHEF_SECOND_DEBATE, right after the normal discussion order finishes.
+   * He can always choose fewer (including zero). Tune this up for bigger
+   * tables, down for smaller ones. See engine/SecondDebate.ts.
+   */
+  secondDebateSlots: number;
   /** progression between phases: admin clicks "next" vs automatic on timer expiry */
   autoProgress: boolean;
   /**
@@ -156,6 +191,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   loupBlancRule: { mode: "EVERY_SECOND_NIGHT" },
   tieResolutionRule: "REPEAT_DEFENSE",
   chefVoteBonusThreshold: 6,
+  secondDebateSlots: 2,
   autoProgress: false,
   soundEffectsEnabled: true,
   name: "Partie sans nom",
@@ -196,6 +232,17 @@ export const ROLE_METADATA: Record<RoleId, RoleDefinitionMeta> = {
     team: "LOUPS",
     shortDescription:
       "Un loup solitaire qui, selon la configuration, peut dévorer un loup-garou certaines nuits.",
+    hasNightAction: true,
+    hasDeathTrigger: false,
+  },
+  LOUP_VERT: {
+    id: "LOUP_VERT",
+    displayName: "Loup vert",
+    team: "LOUPS",
+    shortDescription:
+      "Joue avec la meute. À partir de la nuit 2, devine chaque nuit le rôle d'un villageois : s'il a " +
+      "raison, il lui vole son pouvoir pour cette nuit (le Chasseur, lui, reste volé pour toujours) et " +
+      "la victime devient un simple villageois pour de bon.",
     hasNightAction: true,
     hasDeathTrigger: false,
   },
@@ -249,6 +296,28 @@ export const ROLE_METADATA: Record<RoleId, RoleDefinitionMeta> = {
     team: "VILLAGE",
     shortDescription:
       "Villageois qui choisit un « père » la première nuit. Si ce père meurt, Mowgli devient loup-garou.",
+    hasNightAction: true,
+    hasDeathTrigger: false,
+  },
+  BARBIE: {
+    id: "BARBIE",
+    displayName: "Barbie",
+    team: "VILLAGE",
+    shortDescription:
+      "Une fois par partie, en pleine discussion du jour, désigne un joueur dont le rôle est révélé à " +
+      "tous : un loup démasqué meurt et elle devient Chef du village ; toute autre personne emporte " +
+      "Barbie avec elle dans la mort.",
+    hasNightAction: false,
+    hasDeathTrigger: false,
+  },
+  ALIEN: {
+    id: "ALIEN",
+    displayName: "Alien",
+    team: "SOLO",
+    shortDescription:
+      "Solitaire, contre le village ET contre les loups. Chaque nuit (s'il le souhaite), devine le " +
+      "rôle d'un joueur : juste, il meurt sur-le-champ ; faux, il perd une chance (2 contre le village, " +
+      "1 seule contre les loups) — la dernière chance perdue le tue.",
     hasNightAction: true,
     hasDeathTrigger: false,
   },
@@ -315,8 +384,9 @@ export interface GameStatePublic {
    * The village's day elimination vote is an OPEN ballot (by design, unlike
    * night actions): voterId -> targetId, live, for every vote cast so far
    * in the current round. Only populated during the DAY_VOTE phase; empty
-   * at every other time (including night votes, Chef election votes, and
-   * once a round resolves). Every player can see who is voting for whom.
+   * at every other time (including night votes and once a round resolves).
+   * Every player can see who is voting for whom. Each player gets exactly
+   * one locked vote per round — see VoteManager.castDayVote.
    */
   dayVotes: Record<string, string>;
   /**
@@ -326,6 +396,10 @@ export interface GameStatePublic {
    * Chef's vote will visually undercount.
    */
   dayVoteTally: Record<string, number>;
+  /** Same open-ballot pattern as `dayVotes`, but for the Chef election vote — only populated during CHEF_VOTE. */
+  chefVotes: Record<string, string>;
+  /** Live vote count per candidate during CHEF_VOTE — unweighted (nobody is Chef yet at this point), unlike dayVoteTally. */
+  chefVoteTally: Record<string, number>;
   /**
    * Today's full speaking order for DAY_1_DISCUSSION / DAY_DISCUSSION —
    * player ids, Chef first and last, everyone else once in between. Null
@@ -345,6 +419,29 @@ export interface GameStatePublic {
   tieDefenseOrder: string[] | null;
   /** Whoever's turn it currently is within tieDefenseOrder; null outside TIE_DEFENSE. */
   tieDefenseCurrentSpeakerId: string | null;
+  /**
+   * DAY_VOTE's per-player voting turn order — every alive player once,
+   * same relative order as that day's discussion, Chef always last
+   * regardless of where they landed in the discussion order. Rebuilt fresh
+   * every round (including round 2+ re-votes after a tie). Null outside
+   * DAY_VOTE.
+   */
+  dayVoteOrder: string[] | null;
+  /** Whoever's turn it currently is to vote within dayVoteOrder; null outside DAY_VOTE. */
+  dayVoteCurrentVoterId: string | null;
+  /**
+   * CHEF_SECOND_DEBATE: true while the phase is active but the Chef hasn't
+   * chosen who (if anyone) gets a bonus turn yet — the frontend uses this
+   * to show the Chef's picker instead of a speaker view. False once he's
+   * decided (even if he picked nobody) or outside this phase entirely.
+   */
+  secondDebateChoicePending: boolean;
+  /** The bonus speakers the Chef picked, in the order they'll speak. Null outside CHEF_SECOND_DEBATE, or before the Chef has chosen. */
+  secondDebateOrder: string[] | null;
+  /** Whoever's bonus turn it currently is within secondDebateOrder; null outside that sub-state. */
+  secondDebateCurrentSpeakerId: string | null;
+  /** Mirrors GameConfig.secondDebateSlots — so the Chef's picker UI can enforce/display the max without needing the full admin config. */
+  secondDebateSlots: number;
   /** Mirrors GameConfig.soundEffectsEnabled — the single source of truth every client checks before playing any cue. */
   soundEffectsEnabled: boolean;
 }
@@ -355,4 +452,22 @@ export interface EndGameStats {
   totalNights: number;
   totalDays: number;
   chefHistory: string[];
+}
+
+/**
+ * Everything the accounts/stats/history layer (apps/server) needs to
+ * persist one player's outcome for a finished game — deliberately flat and
+ * role-agnostic (team comes from ROLE_METADATA, not a hardcoded switch) so
+ * that layer never needs to know anything about individual roles. See
+ * GameEngine.getFinalPlayerSummaries().
+ */
+export interface FinalPlayerSummary {
+  playerId: string;
+  nickname: string;
+  roleId: RoleId;
+  team: Team;
+  isAlive: boolean;
+  deathCause: string | null;
+  /** "Nuit N" / "Jour N", or null if he survived to the end. */
+  deathMoment: string | null;
 }

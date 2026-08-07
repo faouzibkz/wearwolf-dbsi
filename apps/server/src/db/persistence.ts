@@ -32,6 +32,167 @@ export async function persistGame(engine: GameEngine): Promise<void> {
   }
 }
 
+/**
+ * Writes one PlayerRecord row per player, once, when a game ends (see
+ * socket/handlers.ts's `sync()` — called from the same one-shot
+ * `consumeGameEndedNotification()` branch that fires the GAME_ENDED socket
+ * event). This is what actually turns "a finished game" into durable,
+ * queryable history/stats (section 4/5 of the accounts spec) — before this,
+ * PlayerRecord existed in the schema but nothing ever wrote to it.
+ *
+ * `userIdForPlayer` is a plain lookup function rather than a Map so the
+ * caller (handlers.ts) can source it from gameRegistry without this module
+ * needing to know anything about how that mapping is maintained — keeps the
+ * account-linkage bookkeeping and the DB write fully decoupled.
+ *
+ * Best-effort, like persistGame(): a DB hiccup here must never crash or
+ * hang the game for the people still looking at the end screen.
+ */
+export async function finalizeGameHistory(
+  engine: GameEngine,
+  userIdForPlayer: (playerId: string) => string | undefined,
+): Promise<void> {
+  try {
+    const game = await prisma.game.findUnique({ where: { code: engine.getCode() } });
+    if (!game) {
+      // persistGame() always upserts the Game row before this runs (see
+      // sync() ordering in handlers.ts) — this should be unreachable, but
+      // there's nothing to attach PlayerRecord rows to if it somehow is.
+      console.error("[history] no Game row found for", engine.getCode(), "— skipping history write");
+      return;
+    }
+
+    const winner = engine.getPublicState().winner;
+    const summaries = engine.getFinalPlayerSummaries();
+
+    await Promise.all(
+      summaries.map((s) => {
+        const result = winner === null ? "DRAW" : s.team === winner ? "WON" : "LOST";
+        return prisma.playerRecord.upsert({
+          where: { gameId_enginePlayerId: { gameId: game.id, enginePlayerId: s.playerId } },
+          create: {
+            gameId: game.id,
+            enginePlayerId: s.playerId,
+            nickname: s.nickname,
+            roleId: s.roleId,
+            isAlive: s.isAlive,
+            deathCause: s.deathCause,
+            deathMoment: s.deathMoment,
+            team: s.team,
+            result,
+            userId: userIdForPlayer(s.playerId) ?? null,
+          },
+          update: {
+            nickname: s.nickname,
+            roleId: s.roleId,
+            isAlive: s.isAlive,
+            deathCause: s.deathCause,
+            deathMoment: s.deathMoment,
+            team: s.team,
+            result,
+            userId: userIdForPlayer(s.playerId) ?? null,
+          },
+        });
+      }),
+    );
+  } catch (err) {
+    console.error("[history] failed to finalize game history for", engine.getCode(), err);
+  }
+}
+
+/**
+ * Minimum stats set from section 4 of the spec (games/wins/losses/win-rate)
+ * plus the per-role breakdown — computed on the fly from PlayerRecord rows
+ * rather than cached, which is plenty fast at this scale and means there's
+ * no separate cache to keep in sync. Deliberately generic: it groups by
+ * whatever `roleId` strings actually show up in the data, so a brand new
+ * role shows up here automatically the first time anyone plays it — no
+ * code change required (see spec section 16).
+ */
+export async function getUserAggregateStats(userId: string) {
+  const records: { roleId: string; result: string | null }[] = await prisma.playerRecord.findMany({
+    where: { userId },
+    select: { roleId: true, result: true },
+  });
+
+  const gamesPlayed = records.length;
+  const gamesWon = records.filter((r) => r.result === "WON").length;
+  const gamesLost = records.filter((r) => r.result === "LOST").length;
+  const winRate = gamesPlayed > 0 ? gamesWon / gamesPlayed : 0;
+
+  const perRoleMap = new Map<string, { games: number; wins: number; losses: number }>();
+  for (const r of records) {
+    const bucket = perRoleMap.get(r.roleId) ?? { games: 0, wins: 0, losses: 0 };
+    bucket.games += 1;
+    if (r.result === "WON") bucket.wins += 1;
+    if (r.result === "LOST") bucket.losses += 1;
+    perRoleMap.set(r.roleId, bucket);
+  }
+  const perRole = [...perRoleMap.entries()]
+    .map(([roleId, b]) => ({
+      roleId,
+      games: b.games,
+      wins: b.wins,
+      losses: b.losses,
+      winRate: b.games > 0 ? b.wins / b.games : 0,
+    }))
+    .sort((a, b) => b.games - a.games);
+
+  return { gamesPlayed, gamesWon, gamesLost, winRate, perRole };
+}
+
+interface HistoryRow {
+  nickname: string;
+  roleId: string;
+  team: string | null;
+  result: string | null;
+  isAlive: boolean;
+  deathCause: string | null;
+  deathMoment: string | null;
+  game: {
+    id: string;
+    code: string;
+    name: string;
+    createdAt: Date;
+    endedAt: Date | null;
+    winner: string | null;
+    _count: { players: number };
+  };
+}
+
+/** Paginated match history (section 5) — newest first. */
+export async function getUserGameHistory(userId: string, { limit = 20, offset = 0 }: { limit?: number; offset?: number } = {}) {
+  const [records, total]: [HistoryRow[], number] = await Promise.all([
+    prisma.playerRecord.findMany({
+      where: { userId },
+      include: { game: { include: { _count: { select: { players: true } } } } },
+      orderBy: { joinedAt: "desc" },
+      take: limit,
+      skip: offset,
+    }),
+    prisma.playerRecord.count({ where: { userId } }),
+  ]);
+
+  return {
+    total,
+    games: records.map((r) => ({
+      gameId: r.game.id,
+      code: r.game.code,
+      name: r.game.name,
+      playedAt: (r.game.endedAt ?? r.game.createdAt).toISOString(),
+      playerCount: r.game._count.players,
+      nickname: r.nickname,
+      roleId: r.roleId,
+      team: r.team,
+      result: r.result as "WON" | "LOST" | "DRAW" | null,
+      isAlive: r.isAlive,
+      deathCause: r.deathCause,
+      deathMoment: r.deathMoment,
+      winner: r.game.winner,
+    })),
+  };
+}
+
 export async function listPresets() {
   return prisma.preset.findMany({ orderBy: { updatedAt: "desc" } });
 }

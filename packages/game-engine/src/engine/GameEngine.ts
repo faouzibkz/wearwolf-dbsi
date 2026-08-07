@@ -1,15 +1,17 @@
 import type {
   EndGameStats,
+  FinalPlayerSummary,
   GameConfig,
   GameStatePublic,
   LogEntry,
   Phase,
   PlayerPrivateRole,
   PlayerPublic,
+  PrivateRoleStatePayload,
   RoleId,
   Team,
 } from "@loupgarou/shared";
-import { CHEF_TITLE, DEFAULT_GAME_CONFIG } from "@loupgarou/shared";
+import { CHEF_TITLE, DEFAULT_GAME_CONFIG, ROLE_METADATA } from "@loupgarou/shared";
 import type { EngineContext, GameInternalState, InternalPlayer, NightScratch } from "../internalTypes";
 import { generateGameCode, generatePlayerId, generateReconnectToken } from "../util/ids";
 import { shuffle } from "../util/shuffle";
@@ -17,10 +19,14 @@ import { ROLE_REGISTRY } from "../roles/registry";
 import * as ChefElection from "./ChefElection";
 import * as DayDiscussion from "./DayDiscussion";
 import * as TieDefense from "./TieDefense";
+import * as DayVoteQueue from "./DayVoteQueue";
 import * as VoteManager from "./VoteManager";
 import * as NightResolver from "./NightResolver";
+import * as LoupVert from "./LoupVert";
+import * as Barbie from "./Barbie";
+import * as SecondDebate from "./SecondDebate";
 import { processDeaths } from "./DeathQueue";
-import { checkVictory } from "./VictoryConditions";
+import { checkVictory, isAlienStalemate } from "./VictoryConditions";
 
 export interface StartGameResult {
   playersAssigned: number;
@@ -52,6 +58,7 @@ export class GameEngine {
       config: fullConfig,
       phase: "LOBBY",
       paused: false,
+      pausedRemainingMs: null,
       players: new Map(),
       playerOrder: [],
       nightNumber: 0,
@@ -59,6 +66,8 @@ export class GameEngine {
       chef: { candidates: [], debateOrder: [], currentSpeakerIndex: 0, votes: new Map(), electedId: null },
       dayDiscussion: null,
       tieDefense: null,
+      dayVoteQueue: null,
+      secondDebateQueue: null,
       dayVote: { votes: new Map(), round: 1, tiedIds: [] },
       corbeauMarkedPlayerId: null,
       nightScratch: null,
@@ -73,6 +82,7 @@ export class GameEngine {
       pendingChefSuccessionDeadChefId: null,
       pendingTieResolutionRule: null,
       rolesRevealedToPlayers: false,
+      gameEndedNotified: false,
       createdAt: Date.now(),
     };
     return new GameEngine(state, rng);
@@ -154,12 +164,23 @@ export class GameEngine {
       joinedAt: Date.now(),
       reconnectToken: generateReconnectToken(),
       deathCause: null,
+      deathMoment: null,
       sorciereHealUsed: false,
       sorcierePoisonUsed: false,
       salvateurLastProtectedId: null,
       mowgliFatherId: null,
       mowgliTransformed: false,
       voyanteInspectionCounts: {},
+      loupVertLastGuessNight: null,
+      loupVertHasChasseurPower: false,
+      loupVertStolenPowerRoleId: null,
+      loupVertStolenPowerSourcePlayerId: null,
+      loupVertStolenPowerGrantedNight: null,
+      loupVertStolenPowerUsedTonight: false,
+      barbiePowerUsed: false,
+      alienVillageChancesLeft: 2,
+      alienWolfChancesLeft: 1,
+      alienLastGuessResult: null,
     };
     this.state.players.set(player.id, player);
     this.state.playerOrder.push(player.id);
@@ -272,6 +293,10 @@ export class GameEngine {
     return { autoElected: true };
   }
 
+  getCurrentChefDebateSpeakerId(): string | null {
+    return this.state.chef.debateOrder[this.state.chef.currentSpeakerIndex] ?? null;
+  }
+
   advanceChefSpeaker(): { done: boolean } {
     if (this.state.phase !== "CHEF_DEBATE") throw new Error("Ce n'est pas le moment.");
     const result = ChefElection.advanceSpeaker(this.ctx());
@@ -334,10 +359,103 @@ export class GameEngine {
       if (this.state.phase === "DAY_1_DISCUSSION") {
         this.startNight();
       } else {
-        this.state.phase = "DAY_VOTE";
+        this.startChefSecondDebate();
       }
     }
     return result;
+  }
+
+  /**
+   * CHEF_SECOND_DEBATE is entered once the normal Day Discussion speaking
+   * order (including the Chef's closing word) has fully run out — never
+   * for DAY_1_DISCUSSION, which has no day vote (and so no second debate)
+   * at all; see advanceDaySpeaker() above. `secondDebateQueue` starts null
+   * to represent "the Chef hasn't chosen yet" (see isSecondDebateChoicePending()).
+   */
+  private startChefSecondDebate(): void {
+    this.state.phase = "CHEF_SECOND_DEBATE";
+    this.state.secondDebateQueue = null;
+  }
+
+  // -------------------------------------------------------------------
+  // Barbie: one-shot mid-day-discussion reveal
+  // -------------------------------------------------------------------
+
+  canBarbieUsePower(barbieId: string): boolean {
+    if (this.state.phase !== "DAY_1_DISCUSSION" && this.state.phase !== "DAY_DISCUSSION") return false;
+    return Barbie.canUsePower(this.ctx(), barbieId);
+  }
+
+  getBarbieEligibleTargets(barbieId: string): string[] {
+    if (!this.canBarbieUsePower(barbieId)) return [];
+    return Barbie.getEligibleTargets(this.ctx(), barbieId);
+  }
+
+  useBarbiePower(barbieId: string, targetId: string): Barbie.BarbieRevealOutcome {
+    if (this.state.phase !== "DAY_1_DISCUSSION" && this.state.phase !== "DAY_DISCUSSION") {
+      throw new Error("Ce n'est pas le moment.");
+    }
+    this.snapshot();
+    const outcome = Barbie.usePower(this.ctx(), barbieId, targetId);
+    // Handles the victory check, any pending blockers (e.g. the revealed
+    // wolf also held the Chasseur's revenge shot), and — once clear — either
+    // resuming discussion with whoever's now next, or moving on if nobody's
+    // left to speak. See tryResumeAfterBlockers() for the delayed-blocker case.
+    this.finishDiscussionEventAndMaybeProceed();
+    return outcome;
+  }
+
+  // -------------------------------------------------------------------
+  // Alien: forcing an early nightfall from the middle of a day discussion
+  // -------------------------------------------------------------------
+  //
+  // The Alien can, at will during ANY day discussion (day 1 included), cut
+  // the debate short and force night to fall immediately so he can make
+  // his guess right away instead of waiting for the day to run its normal
+  // course. Per the confirmed design: everything else scheduled for that
+  // day — the rest of discussion, the Chef's second-debate bonus round, and
+  // that day's elimination vote — is simply skipped, not deferred; the
+  // resulting night is a COMPLETELY NORMAL one (every other night-active
+  // role still gets their usual turn, the Alien's guess is just one more
+  // action within it); and this changes nothing about his existing guess
+  // pools (1 chance vs. wolf-team roles, 2 chances vs. village-team roles)
+  // or the fact that ALIEN itself is never a guessable target.
+  //
+  // Secrecy: nobody besides the Alien himself may ever learn this
+  // happened. appendLog() only reaches the admin's private log view (see
+  // broadcast.ts — ADMIN_STATE is admin-socket-only, never broadcast to
+  // players), so recording it there is safe; there must be no
+  // notifyGame/broadcast NOTIFICATION call anywhere in this path. To
+  // everyone else at the table, the day just... ended a little early.
+  canAlienForceNightfall(alienId: string): boolean {
+    if (this.state.phase !== "DAY_1_DISCUSSION" && this.state.phase !== "DAY_DISCUSSION") return false;
+    const player = this.state.players.get(alienId);
+    return Boolean(player && player.isAlive && player.roleId === "ALIEN");
+  }
+
+  triggerAlienNightfall(alienId: string): void {
+    if (this.state.phase !== "DAY_1_DISCUSSION" && this.state.phase !== "DAY_DISCUSSION") {
+      throw new Error("Ce n'est pas le moment.");
+    }
+    const player = this.ctx().getPlayer(alienId);
+    if (player.roleId !== "ALIEN") {
+      throw new Error("Seul l'Alien peut faire tomber la nuit prématurément.");
+    }
+    if (!player.isAlive) {
+      throw new Error("Un joueur mort ne peut pas agir.");
+    }
+    // Defensive: a Chasseur shot or Chef-succession pick already queued up
+    // from something earlier in the discussion must resolve on its own
+    // terms before the night can start — jumping straight to NIGHT out
+    // from under it would strand that blocker forever (see
+    // schedulePendingBlockerTimer's own doc comment for why blockers are
+    // never allowed to be silently skipped over).
+    if (this.hasPendingBlockers()) {
+      throw new Error("Une action en attente doit être résolue avant que la nuit ne tombe.");
+    }
+    this.snapshot();
+    this.appendLog("La nuit tombe soudainement, avant la fin des débats.");
+    this.startNight();
   }
 
   private startNight(): void {
@@ -345,6 +463,13 @@ export class GameEngine {
     this.state.nightNumber += 1;
     this.state.nightScratch = NightResolver.createNightScratch(this.state.nightNumber);
     this.state.phase = "NIGHT";
+    // Reset here — at the START of the night's resolution unit — rather
+    // than inside resolveNightAndProceed() (the OLD reset point): the
+    // Alien can now kill someone mid-night, independent of the night's own
+    // batched resolution, and resolveNightAndProceed() resetting the list
+    // right before computing ITS OWN deaths would have silently wiped that
+    // earlier kill back out of the morning's public reveal.
+    this.state.lastDeathPlayerIds = [];
     this.appendLog("La nuit tombe sur le village.");
   }
 
@@ -354,9 +479,64 @@ export class GameEngine {
     return NightResolver.collectNightPrompts(this.ctx(), this.state.nightNumber, onlyPending);
   }
 
-  submitNightAction(playerId: string, actionType: string, targetId?: string): void {
+  submitNightAction(playerId: string, actionType: string, targetId?: string, guessedRoleId?: RoleId): void {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
-    NightResolver.submitNightAction(this.ctx(), playerId, actionType, targetId);
+    NightResolver.submitNightAction(this.ctx(), playerId, actionType, targetId, guessedRoleId);
+  }
+
+  // -------------------------------------------------------------------
+  // Loup Vert: role guess + stolen power (night-only, dedicated side
+  // channel — see engine/LoupVert.ts for why this can't just reuse the
+  // standard submitNightAction/getNightPrompts path).
+  // -------------------------------------------------------------------
+
+  getLoupVertGuessableRoleIds(): RoleId[] {
+    return LoupVert.guessableRoleIds();
+  }
+
+  getLoupVertGuessEligibleTargets(loupVertId: string): string[] {
+    if (this.state.phase !== "NIGHT") return [];
+    return LoupVert.guessEligibleTargetIds(this.ctx(), loupVertId);
+  }
+
+  /** True once he's already used up tonight's one guess attempt (or it's night 1, when he has none). */
+  hasLoupVertGuessedTonight(loupVertId: string): boolean {
+    const player = this.state.players.get(loupVertId);
+    if (!player) return true;
+    if (this.state.nightNumber < 2) return true;
+    return player.loupVertLastGuessNight === this.state.nightNumber;
+  }
+
+  submitLoupVertGuess(
+    loupVertId: string,
+    targetId: string,
+    guessedRoleId: RoleId,
+  ): LoupVert.LoupVertGuessOutcome {
+    if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
+    return LoupVert.submitGuess(this.ctx(), loupVertId, targetId, guessedRoleId);
+  }
+
+  /** The stolen-power prompt, if he currently holds a one-night power he hasn't used yet tonight. */
+  getLoupVertStolenPowerPrompt(loupVertId: string) {
+    if (this.state.phase !== "NIGHT") return null;
+    return LoupVert.getStolenPowerPrompt(this.ctx(), loupVertId);
+  }
+
+  submitLoupVertStolenPowerAction(loupVertId: string, actionType: string, targetId?: string): void {
+    if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
+    LoupVert.submitStolenPowerAction(this.ctx(), loupVertId, actionType, targetId);
+  }
+
+  /**
+   * Only ever called server-side for the acting Alien's own socket — never
+   * broadcast. His own private feedback after his most-recent guess (if
+   * any yet) — see InternalPlayer.alienLastGuessResult. This is the only
+   * place the Alien's guess correctness is ever surfaced to ANYONE: not to
+   * the village, not to his target (who just sees an ordinary death, or
+   * nothing at all if the guess was wrong), only to himself.
+   */
+  getAlienLastGuessResult(alienId: string): "CORRECT" | "WRONG" | null {
+    return this.state.players.get(alienId)?.alienLastGuessResult ?? null;
   }
 
   /**
@@ -377,18 +557,74 @@ export class GameEngine {
     return null;
   }
 
+  /**
+   * Only ever called server-side for a specific socket — never broadcast
+   * (see PRIVATE_ROLE_STATE / PrivateRoleStatePayload). Only the fields
+   * relevant to the player's own current role are populated; everyone else
+   * gets an empty object. Deliberately says nothing about WHETHER a guess
+   * was right or wrong, or who was targeted — that's exactly the kind of
+   * leak the Loup Vert's and Alien's secrecy requirements forbid; this only
+   * ever reports the player's OWN resource counters back to themselves.
+   */
+  getPrivateRoleExtras(playerId: string): PrivateRoleStatePayload {
+    const player = this.state.players.get(playerId);
+    if (!player) return {};
+    const extras: PrivateRoleStatePayload = {};
+    if (player.roleId === "BARBIE") {
+      extras.barbiePowerAvailable = !player.barbiePowerUsed;
+    }
+    if (player.roleId === "ALIEN") {
+      extras.alienChances = { village: player.alienVillageChancesLeft, wolf: player.alienWolfChancesLeft };
+      extras.alienCanForceNightfall = this.canAlienForceNightfall(playerId);
+    }
+    if (player.roleId === "LOUP_VERT") {
+      extras.loupVertHasChasseurPower = player.loupVertHasChasseurPower;
+      extras.loupVertStolenPowerRoleId =
+        player.loupVertStolenPowerGrantedNight === this.state.nightNumber
+          ? player.loupVertStolenPowerRoleId
+          : null;
+    }
+    return extras;
+  }
+
+  private static readonly WOLF_ROLE_IDS = new Set(["LOUP_GAROU", "LOUP_BLANC", "LOUP_VERT"]);
+
   /** Wolves (and a transformed Mowgli) share a private room, computed fresh each call. */
   getWolfRoomMemberIds(): string[] {
     return [...this.state.players.values()]
-      .filter((p) => p.isAlive && (p.roleId === "LOUP_GAROU" || p.roleId === "LOUP_BLANC"))
+      .filter((p) => p.isAlive && GameEngine.WOLF_ROLE_IDS.has(p.roleId))
       .map((p) => p.id);
+  }
+
+  /**
+   * A given player's fellow (still-alive) wolves, by id + nickname —
+   * always empty for a non-wolf. Used to tell the pack who's on their team
+   * right from role assignment, not just once the wolf room opens on
+   * night 1 (see broadcast.ts's pushRoleAssignments).
+   */
+  getWolfTeammates(playerId: string): { id: string; nickname: string }[] {
+    const player = this.state.players.get(playerId);
+    if (!player || !GameEngine.WOLF_ROLE_IDS.has(player.roleId)) return [];
+    return this.getWolfRoomMemberIds()
+      .filter((id) => id !== playerId)
+      .map((id) => {
+        const p = this.state.players.get(id)!;
+        return { id: p.id, nickname: p.nickname };
+      });
   }
 
   resolveNightAndProceed(): { anyoneDied: boolean; blocked: boolean; mowgliTransformed: boolean } {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
     this.snapshot();
-    this.state.lastDeathPlayerIds = [];
-    const { anyoneDied } = NightResolver.resolveNight(this.ctx(), this.state.nightNumber);
+    // lastDeathPlayerIds is reset in startNight(), NOT here — see the
+    // comment there. Resetting it here would wipe out any Alien kill that
+    // already happened earlier in the same night.
+    NightResolver.resolveNight(this.ctx(), this.state.nightNumber);
+    // Based on the FULL night's death list, not just this resolveNight()
+    // call's own contribution — an Alien kill earlier the same night must
+    // still count as "quelqu'un est mort cette nuit", even if nobody died
+    // in the wolves'/Sorcière's own batch resolution.
+    const anyoneDied = this.state.lastDeathPlayerIds.length > 0;
 
     if (this.hasPendingBlockers()) {
       return { anyoneDied, blocked: true, mowgliTransformed: this.state.pendingMowgliReveal };
@@ -497,8 +733,41 @@ export class GameEngine {
     if (this.hasPendingBlockers()) return;
     if (this.state.phase === "NIGHT") {
       this.finishMorning(this.state.lastDeathPlayerIds.length > 0);
+    } else if (this.state.phase === "DAY_1_DISCUSSION" || this.state.phase === "DAY_DISCUSSION") {
+      // A Barbie reveal mid-discussion can itself trigger a pending
+      // Chasseur shot or Chef succession — resume discussion (or move on)
+      // once that clears, instead of falling into the DAY_VOTE-oriented
+      // branch below, which doesn't apply here.
+      this.finishDiscussionEventAndMaybeProceed();
     } else {
       this.finishEliminationAndProceed();
+    }
+  }
+
+  /**
+   * Checks victory (including the Alien-only-stalemate safety net) and, if
+   * the game isn't over, either lets discussion resume with whoever's next
+   * or — if nobody's left to speak — moves on to the next phase. Used both
+   * by useBarbiePower() directly and by tryResumeAfterBlockers() once a
+   * blocker a reveal triggered (a Chasseur shot, a Chef succession) clears.
+   */
+  private finishDiscussionEventAndMaybeProceed(): void {
+    if (this.hasPendingBlockers()) return;
+    const winner = checkVictory(this.ctx());
+    if (winner) {
+      this.endGame(winner);
+      return;
+    }
+    if (isAlienStalemate(this.ctx())) {
+      this.endGame(null);
+      return;
+    }
+    if (DayDiscussion.currentDaySpeakerId(this.ctx()) !== null) return; // speakers remain — resume normally
+
+    if (this.state.phase === "DAY_1_DISCUSSION") {
+      this.startNight();
+    } else if (this.state.phase === "DAY_DISCUSSION") {
+      this.startChefSecondDebate();
     }
   }
 
@@ -507,7 +776,11 @@ export class GameEngine {
     this.state.phase = "MORNING";
     this.appendLog(anyoneDied ? "Quelqu'un est mort cette nuit." : "Personne n'est mort cette nuit.");
     const winner = checkVictory(this.ctx());
-    if (winner) this.endGame(winner);
+    if (winner) {
+      this.endGame(winner);
+    } else if (isAlienStalemate(this.ctx())) {
+      this.endGame(null);
+    }
   }
 
   proceedFromMorningToDay(): void {
@@ -522,22 +795,125 @@ export class GameEngine {
   // Day discussion / vote / tie handling
   // -------------------------------------------------------------------
 
-  /** Manual "skip the rest of the discussion" — bypasses however far the speaking order has gotten. */
+  /**
+   * Manual "skip the rest of the discussion" — bypasses however far the
+   * speaking order has gotten, going straight to the vote. Deliberately
+   * also skips the optional Chef's second debate: this is the "we're done
+   * talking, let's vote" shortcut (used by the admin's force-next-phase and
+   * the Chef's own self-serve equivalent), so it makes sense for it to skip
+   * every remaining optional discussion step, not just the mandatory one.
+   * The natural, un-skipped completion path (advanceDaySpeaker() running
+   * the queue all the way out) still goes through CHEF_SECOND_DEBATE.
+   */
   endDayDiscussion(): void {
     if (this.state.phase !== "DAY_DISCUSSION") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
-    this.state.phase = "DAY_VOTE";
+    this.startDayVoteFromSecondDebate();
   }
 
-  castDayVote(voterId: string, targetId: string): void {
+  // -------------------------------------------------------------------
+  // Chef's second debate (optional bonus turns, right before DAY_VOTE)
+  // -------------------------------------------------------------------
+
+  /** True once CHEF_SECOND_DEBATE has started but the Chef hasn't yet chosen who (if anyone) speaks again. */
+  isSecondDebateChoicePending(): boolean {
+    return this.state.phase === "CHEF_SECOND_DEBATE" && this.state.secondDebateQueue === null;
+  }
+
+  getSecondDebateEligibleTargets(): string[] {
+    if (this.state.phase !== "CHEF_SECOND_DEBATE") return [];
+    return SecondDebate.getEligibleTargets(this.ctx());
+  }
+
+  /** `playerIds` may be empty — the Chef is explicitly allowed to grant nobody a second turn. */
+  chooseSecondDebateSpeakers(playerIds: string[]): void {
+    if (this.state.phase !== "CHEF_SECOND_DEBATE") throw new Error("Ce n'est pas le moment.");
+    if (this.state.secondDebateQueue !== null) {
+      throw new Error("Le Chef a déjà fait son choix pour ce second débat.");
+    }
+    this.snapshot();
+    SecondDebate.chooseSpeakers(this.ctx(), playerIds);
+    if (SecondDebate.currentSpeakerId(this.ctx()) === null) this.startDayVoteFromSecondDebate();
+  }
+
+  getCurrentSecondDebateSpeakerId(): string | null {
+    return SecondDebate.currentSpeakerId(this.ctx());
+  }
+
+  /**
+   * Advances to the next bonus speaker. `done: true` means the last chosen
+   * player's turn just ended (or none were chosen) — same auto-transition
+   * pattern as advanceChefSpeaker()/advanceDaySpeaker(), moving straight on
+   * to DAY_VOTE.
+   */
+  advanceSecondDebateSpeaker(): { done: boolean } {
+    if (this.state.phase !== "CHEF_SECOND_DEBATE") throw new Error("Ce n'est pas le moment.");
+    const result = SecondDebate.advanceSpeaker(this.ctx());
+    if (result.done) {
+      this.snapshot();
+      this.startDayVoteFromSecondDebate();
+    }
+    return result;
+  }
+
+  /** Manual "skip the rest of the second debate" (also covers skipping it outright before any choice is made). */
+  endChefSecondDebate(): void {
+    if (this.state.phase !== "CHEF_SECOND_DEBATE") throw new Error("Ce n'est pas le moment.");
+    this.snapshot();
+    this.startDayVoteFromSecondDebate();
+  }
+
+  private startDayVoteFromSecondDebate(): void {
+    this.state.phase = "DAY_VOTE";
+    DayVoteQueue.startDayVoteQueue(this.ctx());
+  }
+
+  /**
+   * Casts one player's vote, then immediately advances the queue to the
+   * next voter (no waiting out that voter's own timer once they've acted —
+   * see DayVoteQueue.ts). If that was the last turn (the Chef's, always
+   * last), automatically tallies and proceeds, same auto-transition
+   * pattern as advanceChefSpeaker()/advanceTieDefenseSpeaker().
+   */
+  /**
+   * Returns the DayVoteOutcome the moment this vote happened to be the
+   * queue's last turn (the Chef's, always last) and therefore triggered an
+   * automatic tally — null otherwise (the queue just advanced to the next
+   * voter, nothing resolved yet).
+   */
+  castDayVote(voterId: string, targetId: string): VoteManager.DayVoteOutcome | null {
     if (this.state.phase !== "DAY_VOTE") throw new Error("Ce n'est pas le moment de voter.");
     VoteManager.castDayVote(this.ctx(), voterId, targetId);
+    return this.advanceDayVoteQueue().outcome;
+  }
+
+  getCurrentDayVoterId(): string | null {
+    return DayVoteQueue.currentVoterId(this.ctx());
+  }
+
+  /** Timeout / manual-skip path: the current voter's turn ends WITHOUT a vote being recorded. */
+  skipCurrentDayVoter(): { done: boolean; outcome: VoteManager.DayVoteOutcome | null } {
+    if (this.state.phase !== "DAY_VOTE") throw new Error("Ce n'est pas le moment.");
+    const currentId = DayVoteQueue.currentVoterId(this.ctx());
+    if (currentId) this.appendLog(`${this.ctx().getPlayer(currentId).nickname} n'a pas voté à temps.`);
+    return this.advanceDayVoteQueue();
+  }
+
+  private advanceDayVoteQueue(): { done: boolean; outcome: VoteManager.DayVoteOutcome | null } {
+    if (!this.state.dayVoteQueue) return { done: true, outcome: null };
+    const result = DayVoteQueue.advanceDayVoteQueue(this.ctx());
+    if (result.done) {
+      const outcome = this.tallyDayVoteAndProceed();
+      return { done: true, outcome };
+    }
+    return { done: false, outcome: null };
   }
 
   tallyDayVoteAndProceed(): VoteManager.DayVoteOutcome {
     if (this.state.phase !== "DAY_VOTE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
     this.state.lastDeathPlayerIds = [];
+    this.state.dayVoteQueue = null; // this round's queue has done its job either way
     const outcome = VoteManager.tallyDayVote(this.ctx(), this.rng);
 
     if (outcome.awaitingAnotherRound) {
@@ -565,6 +941,7 @@ export class GameEngine {
     if (this.state.phase !== "TIE_DEFENSE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
     this.state.phase = "DAY_VOTE"; // reuses the round-2+ voting logic in VoteManager
+    DayVoteQueue.startDayVoteQueue(this.ctx()); // fresh per-player turn order for the re-vote
   }
 
   getCurrentTieDefenseSpeakerId(): string | null {
@@ -584,6 +961,19 @@ export class GameEngine {
     if (result.done) {
       this.snapshot();
       this.state.phase = "DAY_VOTE";
+      // BUG FIX: this natural (timer/passe-la-parole-driven) completion path
+      // was setting the phase to DAY_VOTE without ever building the
+      // per-voter turn queue — unlike its manual sibling endTieDefense(),
+      // which does. With no queue, getCurrentDayVoterId() is permanently
+      // null, so nobody's turn ever comes up: nobody can vote, the per-voter
+      // timer's skipCurrentDayVoter() is a silent no-op every time it fires
+      // (re-arming the same broken state forever), and even the Chef's
+      // "next phase" button does nothing (its own skip-loop also no-ops
+      // immediately). The whole game hangs in DAY_VOTE with no way out
+      // short of an admin's manual "Annuler" (undo). Same root cause and
+      // fix as the DAY_DISCUSSION -> DAY_VOTE gap fixed elsewhere this
+      // session (see startChefSecondDebate()/advanceDaySpeaker()).
+      DayVoteQueue.startDayVoteQueue(this.ctx());
     }
     return result;
   }
@@ -620,6 +1010,10 @@ export class GameEngine {
       this.endGame(winner);
       return;
     }
+    if (isAlienStalemate(this.ctx())) {
+      this.endGame(null);
+      return;
+    }
     this.state.phase = "DAY_VOTE_RESULT";
   }
 
@@ -634,12 +1028,26 @@ export class GameEngine {
   // Pause / resume / end
   // -------------------------------------------------------------------
 
+  /**
+   * Freezes the countdown: stashes exactly how much time was left on the
+   * current phase's clock so resume() can hand back that same remaining
+   * time, instead of the pause silently counting down against the players
+   * (if we left phaseEndsAt alone) or resume() granting a full fresh
+   * duration (which is what happened before this existed, incidentally,
+   * as a side effect of the timer-reset bug elsewhere).
+   */
   pause(): void {
     this.state.paused = true;
+    this.state.pausedRemainingMs =
+      this.state.phaseEndsAt !== null ? Math.max(0, this.state.phaseEndsAt - Date.now()) : null;
   }
 
   resume(): void {
     this.state.paused = false;
+    if (this.state.pausedRemainingMs !== null) {
+      this.state.phaseEndsAt = Date.now() + this.state.pausedRemainingMs;
+      this.state.pausedRemainingMs = null;
+    }
   }
 
   endGame(winner: Team | null = null): void {
@@ -707,6 +1115,14 @@ export class GameEngine {
       // the next elimination.
       dayVotes: this.state.phase === "DAY_VOTE" ? Object.fromEntries(this.state.dayVote.votes) : {},
       dayVoteTally: this.state.phase === "DAY_VOTE" ? VoteManager.computeLiveVoteTally(this.ctx()) : {},
+      dayVoteOrder: this.state.dayVoteQueue?.order ?? null,
+      dayVoteCurrentVoterId: DayVoteQueue.currentVoterId(this.ctx()),
+      secondDebateChoicePending: this.isSecondDebateChoicePending(),
+      secondDebateOrder: this.state.secondDebateQueue?.order ?? null,
+      secondDebateCurrentSpeakerId: SecondDebate.currentSpeakerId(this.ctx()),
+      secondDebateSlots: this.state.config.secondDebateSlots,
+      chefVotes: this.state.phase === "CHEF_VOTE" ? Object.fromEntries(this.state.chef.votes) : {},
+      chefVoteTally: this.state.phase === "CHEF_VOTE" ? ChefElection.computeLiveChefVoteTally(this.ctx()) : {},
       dayDiscussionOrder: this.state.dayDiscussion?.order ?? null,
       dayDiscussionCurrentSpeakerId: DayDiscussion.currentDaySpeakerId(this.ctx()),
       tieDefenseOrder: this.state.tieDefense?.order ?? null,
@@ -719,6 +1135,24 @@ export class GameEngine {
     if (!this.state.pendingMowgliReveal) return false;
     this.state.pendingMowgliReveal = false;
     this.state.mowgliTransformedAnnounced = true;
+    return true;
+  }
+
+  /**
+   * True exactly once, the first time this is called after the game
+   * reaches ENDED — lets the server emit GAME_ENDED (with stats) from a
+   * single, always-run place (handlers.ts's sync()) no matter WHAT action
+   * caused the game to end (a manual admin/Chef skip, a timer auto-advance,
+   * or now, a player's own vote completing the day-vote queue). Before
+   * this existed, only the admin/Chef "force next phase" handlers checked
+   * for this explicitly, so a game that ended via a timer expiring (or,
+   * with the new sequential day vote, via a normal vote) never fired
+   * GAME_ENDED at all — players saw the bare "Partie terminée" phase text
+   * instead of the actual victory screen with stats.
+   */
+  consumeGameEndedNotification(): boolean {
+    if (this.state.phase !== "ENDED" || this.state.gameEndedNotified) return false;
+    this.state.gameEndedNotified = true;
     return true;
   }
 
@@ -739,6 +1173,10 @@ export class GameEngine {
 
   setPhaseTimer(durationSeconds: number | null): void {
     this.state.phaseEndsAt = durationSeconds === null ? null : Date.now() + durationSeconds * 1000;
+  }
+
+  getDayVoteRound(): number {
+    return this.state.dayVote.round;
   }
 
   getPendingChasseurShooterIds(): string[] {
@@ -764,6 +1202,28 @@ export class GameEngine {
       totalDays: this.state.dayNumber,
       chefHistory: this.state.chef.electedId ? [this.state.chef.electedId] : [],
     };
+  }
+
+  /**
+   * Flat, role-agnostic per-player outcome snapshot for the accounts/stats/
+   * history layer (apps/server) to persist once a game ends — see
+   * FinalPlayerSummary's doc comment. Deliberately readable at ANY phase
+   * (not just ENDED): nothing stops a caller from asking mid-game, it just
+   * reflects "right now" rather than a final outcome in that case.
+   */
+  getFinalPlayerSummaries(): FinalPlayerSummary[] {
+    return this.state.playerOrder.map((id) => {
+      const p = this.state.players.get(id)!;
+      return {
+        playerId: p.id,
+        nickname: p.nickname,
+        roleId: p.roleId,
+        team: ROLE_METADATA[p.roleId].team,
+        isAlive: p.isAlive,
+        deathCause: p.deathCause,
+        deathMoment: p.deathMoment,
+      };
+    });
   }
 
   getPhase(): Phase {

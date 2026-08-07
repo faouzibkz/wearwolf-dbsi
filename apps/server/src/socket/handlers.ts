@@ -7,18 +7,24 @@ import {
   type AdminResolveTiePayload,
   type AdminSetSoundEffectsPayload,
   type AdminUpdateConfigPayload,
+  type BarbieRevealResultPayload,
+  type BarbieRevealSubmitPayload,
   type ChasseurShootPayload,
+  type ChefSecondDebateChoosePayload,
   type ChefSuccessionChoosePayload,
   type ChefVoteCastPayload,
   type ChefVolunteerPayload,
   type DayVoteCastPayload,
+  type LoupVertGuessSubmitPayload,
+  type LoupVertStolenPowerSubmitPayload,
   type NightActionSubmitPayload,
   type PlayerJoinPayload,
   type PlayerReconnectPayload,
   type WolfChatSendPayload,
 } from "@loupgarou/shared";
 import { gameRegistry } from "../gameRegistry.js";
-import { listPresets, savePreset } from "../db/persistence.js";
+import { listPresets, savePreset, finalizeGameHistory } from "../db/persistence.js";
+import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage } from "./wolfRoom.js";
 import { forceNextPhase } from "./forceNextPhase.js";
@@ -26,14 +32,52 @@ import { safeAck, type Ack, type SocketData } from "./types.js";
 import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
 import { pushAllPrompts } from "./sync.js";
 
+/**
+ * Called after every state-mutating action, no matter which one. Centralizing
+ * the GAME_ENDED emission here (via the one-shot consumeGameEndedNotification)
+ * means it fires exactly once no matter WHAT caused the game to end — a
+ * manual admin/Chef skip, a timer auto-advancing a phase, or a player's own
+ * vote completing the day-vote queue — instead of needing every individual
+ * call site that could possibly end the game to remember to check.
+ */
 function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
   pushAllPrompts(io, engine);
   schedulePhaseTimer(io, engine);
+  if (engine.consumeGameEndedNotification()) {
+    io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
+      stats: engine.getEndGameStats(),
+    });
+    // Turns this finished game into durable per-account history/stats (see
+    // db/persistence.ts's finalizeGameHistory doc comment). Fire-and-forget:
+    // best-effort like every other DB write here, must never block or
+    // delay the GAME_ENDED experience for the people at the table.
+    const playerIds = engine.getPlayers().map((p) => p.id);
+    void finalizeGameHistory(engine, (playerId) => gameRegistry.getPlayerUserId(playerId)).then(() =>
+      gameRegistry.clearPlayerUserIds(playerIds),
+    );
+  }
+}
+
+/** Shared by ADMIN_FORCE_NEXT_PHASE and CHEF_FORCE_NEXT_PHASE — same effect, different permission check. */
+function runForceNextPhase(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
+  forceNextPhase(engine);
+  sync(io, engine); // also handles the GAME_ENDED emission if this just finished the game
 }
 
 export function registerSocketHandlers(io: Server): void {
   io.on("connection", (socket: Socket<any, any, any, SocketData>) => {
     socket.data.isAdmin = false;
+
+    // Game-independent clock sync: lets the client measure (and correct
+    // for) drift between its own clock and this server's, so every
+    // countdown it renders can be anchored to the SERVER's notion of "now"
+    // instead of a possibly-skewed browser Date.now() — see
+    // apps/web/src/lib/serverClock.ts for the client-side round-trip math
+    // that consumes this. No game/auth context needed at all, so it's
+    // registered here rather than further down with the game handlers.
+    socket.on(SOCKET_EVENTS.TIME_SYNC, (_payload: unknown, ack: Ack) => {
+      safeAck(() => ({ serverNow: Date.now() }), ack);
+    });
 
     // No shared password anymore. Omitting gameCode always succeeds and
     // creates a brand new game — anyone can do this, no gate at all.
@@ -84,8 +128,20 @@ export function registerSocketHandlers(io: Server): void {
 
     socket.on(SOCKET_EVENTS.PLAYER_JOIN, (payload: PlayerJoinPayload, ack: Ack) => {
       safeAck(() => {
+        // Every player must be logged into a permanent account (spec
+        // section 1) — the account is the identity stats/history/rating
+        // attach to; `payload.nickname` is only ever this game's disposable
+        // pseudo (section 2). The account's own session cookie rides along
+        // on the socket handshake automatically (see lib/socket.ts's
+        // withCredentials on the client, cors credentials:true on the
+        // server) — nothing about it is ever sent as part of the payload.
+        const session = readSessionFromCookieHeader(socket.handshake.headers.cookie);
+        if (!session) {
+          throw new Error("Vous devez être connecté pour rejoindre une partie.");
+        }
         const engine = gameRegistry.requireGame(payload.gameCode);
         const player = engine.addPlayer(payload.nickname);
+        gameRegistry.setPlayerUserId(player.id, session.userId);
         socket.data.gameCode = engine.getCode();
         socket.data.playerId = player.id;
         socket.join(roomForGame(engine.getCode()));
@@ -102,17 +158,28 @@ export function registerSocketHandlers(io: Server): void {
         if (!player || player.reconnectToken !== payload.reconnectToken) {
           throw new Error("Reconnexion invalide.");
         }
+        // Re-affirm the account link on every reconnect (new tab, page
+        // refresh, or a server restart that wiped gameRegistry's in-memory
+        // map) — same session-cookie source as PLAYER_JOIN. Best-effort: an
+        // expired/missing cookie here just means this reconnect won't be
+        // attributable to an account in the eventual history write; it
+        // must never block someone from getting back into a game they were
+        // already in.
+        const session = readSessionFromCookieHeader(socket.handshake.headers.cookie);
+        if (session) gameRegistry.setPlayerUserId(player.id, session.userId);
         engine.setConnected(player.id, true);
         socket.data.gameCode = engine.getCode();
         socket.data.playerId = player.id;
         socket.join(roomForGame(engine.getCode()));
         socket.join(roomForPlayer(player.id));
+        const wolfTeammates = engine.getWolfTeammates(player.id);
         io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.ROLE_ASSIGNED, {
           playerId: player.id,
           roleId: player.roleId,
+          wolfTeammates,
         });
         sync(io, engine);
-        return { roleId: player.roleId };
+        return { roleId: player.roleId, wolfTeammates };
       }, ack);
     });
 
@@ -179,12 +246,23 @@ export function registerSocketHandlers(io: Server): void {
     socket.on(SOCKET_EVENTS.ADMIN_FORCE_NEXT_PHASE, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
-        forceNextPhase(engine);
-        sync(io, engine);
-        if (engine.getPhase() === "ENDED") {
-          io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
-            stats: engine.getEndGameStats(),
-          });
+        runForceNextPhase(io, engine);
+      }, ack);
+    });
+
+    // Same underlying mechanism as ADMIN_FORCE_NEXT_PHASE, but self-serve
+    // for whoever is currently the elected (and still alive) Chef du
+    // village — checked live against chefId at click time, so the power
+    // correctly transfers to a successor after a Chef-succession and is
+    // revoked the instant the Chef dies, with no separate bookkeeping.
+    socket.on(SOCKET_EVENTS.CHEF_FORCE_NEXT_PHASE, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireChefGame(socket);
+        runForceNextPhase(io, engine);
+        // Skip the toast if this skip just ended the game outright — the
+        // victory screen is the more prominent (and sufficient) signal.
+        if (engine.getPhase() !== "ENDED") {
+          notifyGame(io, engine.getCode(), "INFO", "👑 Le Chef du village a fait avancer la partie.");
         }
       }, ack);
     });
@@ -202,10 +280,7 @@ export function registerSocketHandlers(io: Server): void {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.endGame();
-        sync(io, engine);
-        io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
-          stats: engine.getEndGameStats(),
-        });
+        sync(io, engine); // also handles the GAME_ENDED emission
       }, ack);
     });
 
@@ -268,6 +343,20 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
+    // Self-serve "passe la parole" for the chef debate — same pattern as
+    // DAY_DISCUSSION_PASS_TURN / TIE_DEFENSE_PASS_TURN below.
+    socket.on(SOCKET_EVENTS.CHEF_DEBATE_PASS_TURN, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const currentSpeakerId = engine.getCurrentChefDebateSpeakerId();
+        if (!socket.data.isAdmin && socket.data.playerId !== currentSpeakerId) {
+          throw new Error("Ce n'est pas votre tour de parler.");
+        }
+        engine.advanceChefSpeaker();
+        sync(io, engine);
+      }, ack);
+    });
+
     // -----------------------------------------------------------------
     // Day discussion — self-serve "passe la parole"
     // -----------------------------------------------------------------
@@ -280,6 +369,85 @@ export function registerSocketHandlers(io: Server): void {
           throw new Error("Ce n'est pas votre tour de parler.");
         }
         engine.advanceDaySpeaker();
+        sync(io, engine);
+      }, ack);
+    });
+
+    // -----------------------------------------------------------------
+    // Barbie — one-shot mid-day-discussion reveal
+    // -----------------------------------------------------------------
+
+    socket.on(SOCKET_EVENTS.BARBIE_REVEAL_SUBMIT, (payload: BarbieRevealSubmitPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const barbieId = payload.playerId ?? socket.data.playerId!;
+        const barbieNickname = engine.getPlayers().find((p) => p.id === barbieId)?.nickname ?? "?";
+        const outcome = engine.useBarbiePower(barbieId, payload.targetId);
+
+        // Deliberately public and broadcast to the WHOLE room (not
+        // notifyPlayer): this is the one reveal in the game that's meant to
+        // be seen by everyone, in sync, so every client can play the same
+        // card-flip animation at the same moment before discussion resumes.
+        const resultPayload: BarbieRevealResultPayload = {
+          barbieId,
+          barbieNickname,
+          targetId: outcome.targetId,
+          targetNickname: outcome.targetNickname,
+          targetRoleId: outcome.targetRoleId,
+          outcome: outcome.outcome,
+          newChefId: outcome.newChefId,
+        };
+        io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.BARBIE_REVEAL_RESULT, resultPayload);
+
+        sync(io, engine);
+      }, ack);
+    });
+
+    // -----------------------------------------------------------------
+    // Alien — force an early nightfall from the middle of a day discussion
+    // -----------------------------------------------------------------
+    //
+    // Deliberately silent: no BARBIE-style broadcast, no notifyGame/
+    // notifyPlayer of any kind. Everyone just sees the day discussion end
+    // and a normal night begin, exactly like any other end-of-day
+    // transition (endDay1Discussion/endDayDiscussion) — see
+    // GameEngine.triggerAlienNightfall's doc comment for why this must
+    // never be attributed to anyone, on-screen or in any log a player can
+    // see.
+    socket.on(SOCKET_EVENTS.ALIEN_FORCE_NIGHTFALL, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const alienId = socket.data.playerId!;
+        engine.triggerAlienNightfall(alienId);
+        sync(io, engine);
+      }, ack);
+    });
+
+    // -----------------------------------------------------------------
+    // Chef's second debate (CHEF_SECOND_DEBATE) — optional bonus turns
+    // -----------------------------------------------------------------
+
+    socket.on(SOCKET_EVENTS.CHEF_SECOND_DEBATE_CHOOSE, (payload: ChefSecondDebateChoosePayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const state = engine.getPublicState();
+        if (!socket.data.isAdmin && socket.data.playerId !== state.chefId) {
+          throw new Error("Seul le Chef du village peut accorder un second débat.");
+        }
+        engine.chooseSecondDebateSpeakers(payload.playerIds);
+        sync(io, engine);
+      }, ack);
+    });
+
+    // Self-serve "passe la parole" for a bonus speaker's own turn, same pattern as DAY_DISCUSSION_PASS_TURN.
+    socket.on(SOCKET_EVENTS.CHEF_SECOND_DEBATE_PASS_TURN, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const currentSpeakerId = engine.getCurrentSecondDebateSpeakerId();
+        if (!socket.data.isAdmin && socket.data.playerId !== currentSpeakerId) {
+          throw new Error("Ce n'est pas votre tour de parler.");
+        }
+        engine.advanceSecondDebateSpeaker();
         sync(io, engine);
       }, ack);
     });
@@ -325,8 +493,13 @@ export function registerSocketHandlers(io: Server): void {
     socket.on(SOCKET_EVENTS.DAY_VOTE_CAST, (payload: DayVoteCastPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
+        // castDayVote() itself enforces turn order (throws if it isn't this
+        // voter's turn) and advances the per-voter queue, which may end the
+        // round (tally) or the whole game — sync() (not broadcastGameState)
+        // is required here so the next voter's fresh timer gets scheduled
+        // and any resulting GAME_ENDED gets emitted.
         engine.castDayVote(payload.voterId ?? socket.data.playerId!, payload.targetId);
-        broadcastGameState(io, engine);
+        sync(io, engine);
       }, ack);
     });
 
@@ -338,7 +511,7 @@ export function registerSocketHandlers(io: Server): void {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
-        engine.submitNightAction(playerId, payload.actionType, payload.targetId);
+        engine.submitNightAction(playerId, payload.actionType, payload.targetId, payload.guessedRoleId);
 
         // The Voyante's power is otherwise silent: her INSPECT action has
         // no other feedback channel, so tell her privately what she saw.
@@ -347,6 +520,20 @@ export function registerSocketHandlers(io: Server): void {
           if (result) {
             const verdict = result.result === "LOUP" ? "un Loup-Garou" : "un(e) villageois(e) (pas de loup)";
             notifyPlayer(io, playerId, "INFO", `🔮 ${result.targetNickname} est ${verdict}.`);
+          }
+        }
+
+        // The Alien's guess is otherwise completely silent to everyone,
+        // including — deliberately — the rest of the village: a correct
+        // guess just looks like an ordinary death at dawn, with no hint an
+        // Alien was involved. He alone gets to know whether he was right,
+        // exactly like the Voyante above, via his own private channel.
+        if (payload.actionType === "ALIEN_GUESS") {
+          const result = engine.getAlienLastGuessResult(playerId);
+          if (result === "CORRECT") {
+            notifyPlayer(io, playerId, "INFO", "👽 Votre supposition était juste.");
+          } else if (result === "WRONG") {
+            notifyPlayer(io, playerId, "INFO", "👽 Votre supposition était fausse.");
           }
         }
 
@@ -363,6 +550,55 @@ export function registerSocketHandlers(io: Server): void {
         sync(io, engine);
       }, ack);
     });
+
+    // Loup Vert's two extra, independent night actions — see
+    // packages/shared/src/events.ts's LOUP_VERT_* comments for why these
+    // live on their own channel instead of NIGHT_ACTION_SUBMIT.
+    socket.on(SOCKET_EVENTS.LOUP_VERT_GUESS_SUBMIT, (payload: LoupVertGuessSubmitPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const loupVertId = payload.playerId ?? socket.data.playerId!;
+        const outcome = engine.submitLoupVertGuess(loupVertId, payload.targetId, payload.guessedRoleId);
+
+        // Secrecy requirement: NEVER announce this to the room. Only the
+        // Loup Vert himself learns whether he was right (so he can play
+        // on), and only the victim — on a correct guess — learns their
+        // power was stolen. Everyone else sees nothing at all right now;
+        // the victim's later actions (or lack thereof) just look normal.
+        if (outcome.correct) {
+          notifyPlayer(
+            io,
+            loupVertId,
+            "INFO",
+            outcome.permanent
+              ? "🐺 Vous avez deviné juste ! Vous héritez du pouvoir de vengeance du Chasseur, pour toujours."
+              : "🐺 Vous avez deviné juste ! Vous empruntez son pouvoir pour cette nuit.",
+          );
+          notifyPlayer(
+            io,
+            payload.targetId,
+            "INFO",
+            "🐺 Le Loup vert a deviné votre rôle et vous a volé votre pouvoir. Vous êtes désormais un(e) simple villageois(e).",
+          );
+        } else {
+          notifyPlayer(io, loupVertId, "INFO", "🐺 Mauvaise pioche — ce n'était pas son rôle.");
+        }
+
+        sync(io, engine); // may open the LOUP_VERT_STOLEN_POWER_PROMPT this same night
+      }, ack);
+    });
+
+    socket.on(
+      SOCKET_EVENTS.LOUP_VERT_STOLEN_POWER_SUBMIT,
+      (payload: LoupVertStolenPowerSubmitPayload, ack: Ack) => {
+        safeAck(() => {
+          const engine = requireGameFor(socket);
+          const loupVertId = payload.playerId ?? socket.data.playerId!;
+          engine.submitLoupVertStolenPowerAction(loupVertId, payload.actionType, payload.targetId);
+          sync(io, engine);
+        }, ack);
+      },
+    );
 
     socket.on(SOCKET_EVENTS.CHASSEUR_SHOOT, (payload: ChasseurShootPayload, ack: Ack) => {
       safeAck(() => {
@@ -419,5 +655,16 @@ function requireAdminGame(socket: Socket<any, any, any, SocketData>) {
 
 function requireAdmin(socket: Socket<any, any, any, SocketData>) {
   if (!socket.data.isAdmin) throw new Error("Action réservée à l'administrateur.");
+}
+
+/** Gate for CHEF_FORCE_NEXT_PHASE: must be the currently elected AND still-alive Chef. */
+function requireChefGame(socket: Socket<any, any, any, SocketData>) {
+  const engine = requireGameFor(socket);
+  const state = engine.getPublicState();
+  const me = state.players.find((p) => p.id === socket.data.playerId);
+  if (!state.chefId || socket.data.playerId !== state.chefId || !me?.isAlive) {
+    throw new Error("Action réservée au Chef du village actuellement en vie.");
+  }
+  return engine;
 }
 

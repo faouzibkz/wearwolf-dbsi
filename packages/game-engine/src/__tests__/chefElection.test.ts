@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeGameWithPlayers } from "./helpers";
+import { castDayVotesInOrder, makeGameWithPlayers } from "./helpers";
 
 describe("Chef du village election", () => {
   it("caps candidates at 3 and lets the admin force the debate to start", () => {
@@ -56,20 +56,19 @@ describe("Chef du village election", () => {
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
 
-    // 8 alive, threshold 6 -> Chef (A) still worth 2 votes. A votes for H,
-    // three others vote for G: without the bonus it would tie 3-3-1(H has A's
-    // own vote at weight 1) -> with the bonus H wins outright at 2 vs 3... so
-    // instead prove the bonus directly: A + one other vote for H (2+1=3)
-    // beats three votes for G (3) only if bonus makes it not a tie -> use a
-    // clean 2-voter H vs 3-voter G split where the bonus flips the result.
-    engine.castDayVote(playerIds.A!, playerIds.H!); // Chef vote = weight 2
-    engine.castDayVote(playerIds.B!, playerIds.G!);
-    engine.castDayVote(playerIds.C!, playerIds.G!);
-    const outcome = engine.tallyDayVoteAndProceed();
+    // 8 alive, threshold 6 -> Chef (A) still worth 2 votes. The Chef always
+    // votes last in the turn queue, so cast B and C's votes for G (weight 2)
+    // and the Chef's own vote for H — castDayVotesInOrder walks whoever's
+    // turn it actually is, in whatever order the queue puts them in.
+    const outcome = castDayVotesInOrder(engine, {
+      [playerIds.B!]: playerIds.G!,
+      [playerIds.C!]: playerIds.G!,
+      [playerIds.A!]: playerIds.H!, // Chef vote = weight 2
+    });
 
     // H: 2 (chef bonus). G: 2 (B + C). Tie expected -> proves the bonus
     // actually applied (without it, H would have only 1 vote and G would win outright).
-    expect(outcome.tie).toBe(true);
-    expect(outcome.tiedIds.sort()).toEqual([playerIds.G, playerIds.H].sort());
+    expect(outcome?.tie).toBe(true);
+    expect(outcome?.tiedIds.slice().sort()).toEqual([playerIds.G, playerIds.H].sort());
   });
 });

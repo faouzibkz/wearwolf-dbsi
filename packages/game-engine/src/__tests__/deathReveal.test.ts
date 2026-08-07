@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 function bootToNight1(names: string[], roleCounts: Record<string, number>, seed: number) {
   const engine = GameEngine.createGame({ roleCounts: roleCounts as any }, seededRng(seed));
@@ -68,12 +68,13 @@ describe("public death reveal (name + role, never the mechanism)", () => {
     // Day 2: village votes out dayVictim (not the wolf, so the game continues).
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
+    const votes: Record<string, string> = {};
     for (const n of names) {
       if (n !== dayVictim && engine.getPublicState().players.find((p) => p.id === ids[n]!)?.isAlive) {
-        engine.castDayVote(ids[n]!, ids[dayVictim]!);
+        votes[ids[n]!] = ids[dayVictim]!;
       }
     }
-    engine.tallyDayVoteAndProceed();
+    castDayVotesInOrder(engine, votes);
     expect(engine.getPublicState().lastDeaths.map((d) => d.playerId)).toEqual([ids[dayVictim]]);
     engine.proceedFromDayVoteResultToNight();
 
@@ -93,10 +94,9 @@ describe("public death reveal (name + role, never the mechanism)", () => {
     engine.resolveNightAndProceed(); // nobody targeted, nobody dies
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
-    for (const n of names) {
-      if (n !== wolf) engine.castDayVote(ids[n]!, ids[wolf]!);
-    }
-    engine.tallyDayVoteAndProceed();
+    const votes: Record<string, string> = {};
+    for (const n of names) if (n !== wolf) votes[ids[n]!] = ids[wolf]!;
+    castDayVotesInOrder(engine, votes);
 
     const publicState = engine.getPublicState();
     expect(publicState.lastDeaths).toHaveLength(1);

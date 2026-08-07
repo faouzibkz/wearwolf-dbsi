@@ -15,6 +15,7 @@ import {
   type RoleId,
 } from "@loupgarou/shared";
 import { emitWithAck, getSocket } from "@/lib/socket";
+import { startClockSync } from "@/lib/serverClock";
 import { loadAdminSession } from "@/lib/session";
 import { PlayerList } from "@/components/PlayerList";
 
@@ -36,6 +37,7 @@ export default function AdminDashboardPage() {
     setJoinUrl(`${window.location.origin}/join?code=${code}`);
 
     const socket = getSocket();
+    startClockSync();
     async function authenticate() {
       try {
         await emitWithAck(SOCKET_EVENTS.ADMIN_AUTH, { hostToken: session!.hostToken, gameCode: code });
@@ -211,11 +213,49 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
           reste devient Villageois.
         </p>
 
+        <label className="flex items-center justify-between gap-2 text-sm pt-2 border-t border-night-700/60">
+          <span>
+            Vote du Chef compte double si plus de{" "}
+            <span className="text-night-100/50">(nb. de joueurs vivants)</span> :
+          </span>
+          <input
+            type="number"
+            min={0}
+            className="input w-20 text-center"
+            value={config.chefVoteBonusThreshold}
+            onChange={(e) =>
+              setConfig((c) => ({ ...c, chefVoteBonusThreshold: Math.max(0, Number(e.target.value)) }))
+            }
+          />
+        </label>
+        <p className="text-xs text-night-600 -mt-2">
+          Ex. avec 6 (par défaut) : le vote du Chef compte 2 tant qu&apos;il reste 7 joueurs vivants ou
+          plus, puis repasse à 1 automatiquement. Ne s&apos;applique jamais lors d&apos;un second tour de
+          vote après une égalité — ce tour-là compte toujours 1 voix par joueur.
+        </p>
+
+        <label className="flex items-center justify-between gap-2 text-sm">
+          <span>Second débat du Chef — joueurs éligibles au maximum :</span>
+          <input
+            type="number"
+            min={0}
+            className="input w-20 text-center"
+            value={config.secondDebateSlots}
+            onChange={(e) =>
+              setConfig((c) => ({ ...c, secondDebateSlots: Math.max(0, Number(e.target.value)) }))
+            }
+          />
+        </label>
+        <p className="text-xs text-night-600 -mt-2">
+          Une fois la discussion du jour terminée (à partir du jour 2), le Chef peut accorder ce nombre de
+          temps de parole supplémentaires avant le vote — ou n&apos;en accorder aucun.
+        </p>
+
         <h3 className="font-display text-gold-300 pt-2">Minuteurs (secondes)</h3>
         <p className="text-xs text-night-600 -mt-1">
-          Débat des candidats, discussion et défense en cas d&apos;égalité : durée PAR joueur (chacun
-          parle à tour de rôle), pas pour toute la phase. Le vote du Chef utilise une courte durée fixe,
-          non configurable ici.
+          Débat des candidats, discussion, vote du village et défense en cas d&apos;égalité : durée PAR
+          joueur (chacun parle ou vote à tour de rôle), pas pour toute la phase. Le vote du Chef utilise
+          une courte durée fixe, non configurable ici.
         </p>
         <div className="grid sm:grid-cols-2 gap-3 text-sm">
           {(
@@ -223,7 +263,7 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
               ["chefDebate", "Débat des candidats (par candidat)"],
               ["dayDiscussion", "Discussion du jour (par joueur)"],
               ["night", "Nuit"],
-              ["dayVote", "Vote du village"],
+              ["dayVote", "Vote du village (par joueur)"],
               ["tieDefense", "Défense en cas d'égalité (par joueur à égalité)"],
             ] as const
           ).map(([key, label]) => (

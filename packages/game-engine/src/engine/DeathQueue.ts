@@ -7,6 +7,10 @@ const CAUSE_LABELS: Record<string, string> = {
   SORCIERE_POISON: "empoisonné par la sorcière",
   CHASSEUR_SHOT: "abattu par le chasseur",
   VOTE_ELIMINATION: "éliminé par le village",
+  ALIEN_GUESS_CORRECT: "deviné par l'Alien",
+  ALIEN_OUT_OF_CHANCES: "mort — l'Alien n'avait plus de chance",
+  BARBIE_REVEAL_WOLF: "démasqué par Barbie",
+  BARBIE_REVEAL_MISFIRE: "emporté par le pouvoir de Barbie",
 };
 
 export interface DeathRequest {
@@ -34,6 +38,11 @@ export function processDeaths(ctx: EngineContext, deaths: DeathRequest[]): strin
 
     player.isAlive = false;
     player.deathCause = next.cause;
+    // Same "Nuit N" / "Jour N" label format as the admin log (ctx.log below)
+    // — see InternalPlayer.deathMoment's doc comment for why this lives on
+    // the player instead of only in the log feed.
+    player.deathMoment =
+      ctx.state.phase === "NIGHT" ? `Nuit ${ctx.state.nightNumber}` : `Jour ${ctx.state.dayNumber}`;
     actuallyDied.push(player.id);
     ctx.state.lastDeathPlayerIds.push(player.id);
     ctx.log(`${player.nickname} est mort — ${CAUSE_LABELS[next.cause] ?? next.cause}.`);
@@ -48,6 +57,15 @@ export function processDeaths(ctx: EngineContext, deaths: DeathRequest[]): strin
 
     const role = ROLE_REGISTRY[player.roleId];
     role.onDeath?.(ctx, player);
+
+    // The one deliberate cross-role exception in this file: a Loup Vert who
+    // correctly guessed CHASSEUR permanently holds that death trigger (see
+    // engine/LoupVert.ts) even though his own roleId stays "LOUP_VERT" —
+    // the real Chasseur lost it for good the moment it was stolen. Without
+    // this, his stolen revenge-kill would silently vanish when he dies.
+    if (player.roleId === "LOUP_VERT" && player.loupVertHasChasseurPower) {
+      ROLE_REGISTRY.CHASSEUR.onDeath?.(ctx, player);
+    }
 
     for (const candidate of ctx.state.players.values()) {
       if (

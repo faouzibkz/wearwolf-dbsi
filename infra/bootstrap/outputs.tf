@@ -10,5 +10,5 @@ output "lock_table_name" {
 
 output "region" {
   description = "Region everything in this project lives in."
-  value       = "eu-west-3"
+  value       = var.aws_region
 }

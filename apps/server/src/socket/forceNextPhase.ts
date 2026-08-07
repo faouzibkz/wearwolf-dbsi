@@ -6,6 +6,17 @@ import type { GameEngine } from "@loupgarou/game-engine";
  * only ever needs one button/event regardless of phase.
  */
 export function forceNextPhase(engine: GameEngine): void {
+  // A pending Chasseur shot or Chef succession parks the game mid-phase
+  // without changing engine.getPhase() (see GameEngine.hasPendingBlockers()
+  // for the full explanation). If we ignored that here and blindly re-ran
+  // the phase's normal resolution method, a second manual skip click would
+  // re-run night/vote resolution a SECOND time on top of an already-cleared
+  // ballot — exactly the bug the timer scheduler already guards against
+  // (apps/server/src/socket/timers.ts). Same guard, same fix, here too.
+  if (engine.hasPendingBlockers()) {
+    engine.resolvePendingBlockersIfAny();
+    return;
+  }
   switch (engine.getPhase()) {
     case "LOBBY":
       throw new Error("Utilisez 'Démarrer la partie' depuis le lobby.");
@@ -40,9 +51,22 @@ export function forceNextPhase(engine: GameEngine): void {
     case "DAY_DISCUSSION":
       engine.endDayDiscussion();
       return;
-    case "DAY_VOTE":
-      engine.tallyDayVoteAndProceed();
+    case "CHEF_SECOND_DEBATE":
+      // Whether the Chef hasn't chosen yet, or chosen speakers are still
+      // mid-turn — either way, "skip ahead" means straight to the vote.
+      engine.endChefSecondDebate();
       return;
+    case "DAY_VOTE": {
+      // Sequential per-voter queue now, same shape as CHEF_DEBATE/TIE_DEFENSE
+      // above: skip whoever hasn't voted yet, one turn at a time, until the
+      // queue itself triggers the tally (skipCurrentDayVoter() auto-calls
+      // tallyDayVoteAndProceed() once the last voter's turn ends).
+      let done = false;
+      while (!done) {
+        done = engine.skipCurrentDayVoter().done;
+      }
+      return;
+    }
     case "DAY_VOTE_RESULT":
       engine.proceedFromDayVoteResultToNight();
       return;

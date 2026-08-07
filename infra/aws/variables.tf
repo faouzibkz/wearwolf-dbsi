@@ -29,9 +29,8 @@ variable "db_username" {
 }
 
 variable "domain_name" {
-  description = "The registered domain, without any subdomain (apex). Must already exist as a Route53 hosted zone."
+  description = "The registered domain, without any subdomain (apex). Must already exist as a Route53 hosted zone in THIS AWS account — deliberately has no default (unlike most variables here) so nobody reusing this repo accidentally deploys pointing at someone else's domain. Must be set explicitly via terraform.tfvars or -var."
   type        = string
-  default     = "loupgarou-dbsi.com"
 }
 
 variable "github_repository" {

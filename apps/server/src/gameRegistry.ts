@@ -16,6 +16,16 @@ class GameRegistry {
   private games = new Map<string, GameEngine>();
   private adminSocketByCode = new Map<string, string>();
   private hostTokenByCode = new Map<string, string>();
+  /**
+   * Which account (User.id) is behind each live engine player id. Kept
+   * entirely here, in memory, server-side only — deliberately NOT stored on
+   * GameEngine's own InternalPlayer, so the account/stats layer stays fully
+   * decoupled from the (separately tested, framework-agnostic) game engine
+   * package. Populated on PLAYER_JOIN/PLAYER_RECONNECT, consumed once by
+   * finalizeGameHistory() at GAME_ENDED. Player ids are globally unique
+   * (see util/ids.ts), so one flat map across all games is fine.
+   */
+  private userIdByPlayerId = new Map<string, string>();
 
   create(config: Partial<GameConfig>): { engine: GameEngine; hostToken: string } {
     const engine = GameEngine.createGame(config);
@@ -54,6 +64,19 @@ class GameRegistry {
 
   all(): GameEngine[] {
     return [...this.games.values()];
+  }
+
+  setPlayerUserId(playerId: string, userId: string): void {
+    this.userIdByPlayerId.set(playerId, userId);
+  }
+
+  getPlayerUserId(playerId: string): string | undefined {
+    return this.userIdByPlayerId.get(playerId);
+  }
+
+  /** Called once history is durably written for a game, so this map doesn't grow forever across a long-running process. */
+  clearPlayerUserIds(playerIds: string[]): void {
+    for (const id of playerIds) this.userIdByPlayerId.delete(id);
   }
 }
 

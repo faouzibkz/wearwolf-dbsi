@@ -3,19 +3,31 @@
 import type { RoleId } from "@loupgarou/shared";
 import { ROLE_METADATA } from "@loupgarou/shared";
 
-const ROLE_EMOJI: Record<RoleId, string> = {
+export const ROLE_EMOJI: Record<RoleId, string> = {
   VILLAGEOIS: "🧑‍🌾",
   LOUP_GAROU: "🐺",
   LOUP_BLANC: "🐺",
+  LOUP_VERT: "🐺",
   SORCIERE: "🧙‍♀️",
   VOYANTE: "🔮",
   SALVATEUR: "🛡️",
   CHASSEUR: "🏹",
   CORBEAU: "🐦‍⬛",
   MOWGLI: "🌿",
+  BARBIE: "💃",
+  ALIEN: "👽",
 };
 
-export function RoleCard({ roleId, compact = false }: { roleId: RoleId; compact?: boolean }) {
+export function RoleCard({
+  roleId,
+  compact = false,
+  teammates = [],
+}: {
+  roleId: RoleId;
+  compact?: boolean;
+  /** Fellow wolves, if roleId is a wolf-team role — see RoleAssignedPayload. */
+  teammates?: { id: string; nickname: string }[];
+}) {
   const meta = ROLE_METADATA[roleId];
   return (
     <div
@@ -26,9 +38,19 @@ export function RoleCard({ roleId, compact = false }: { roleId: RoleId; compact?
       <div className="text-5xl mb-3 text-center">{ROLE_EMOJI[roleId]}</div>
       <h2 className="font-display text-xl text-gold-300 text-center mb-1">{meta.displayName}</h2>
       <p className="text-xs uppercase tracking-wide text-center text-night-600 mb-3">
-        {meta.team === "LOUPS" ? "Camp des Loups-garous" : "Camp du Village"}
+        {meta.team === "LOUPS"
+          ? "Camp des Loups-garous"
+          : meta.team === "SOLO"
+            ? "Solitaire — contre tous"
+            : "Camp du Village"}
       </p>
       {!compact && <p className="text-sm text-night-100/80 leading-relaxed">{meta.shortDescription}</p>}
+      {teammates.length > 0 && (
+        <p className="text-sm text-blood-300 text-center mt-3 pt-3 border-t border-night-700/60">
+          Vous êtes loup avec :{" "}
+          <strong>{teammates.map((t) => t.nickname).join(", ")}</strong>
+        </p>
+      )}
     </div>
   );
 }

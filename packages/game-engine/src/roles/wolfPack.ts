@@ -24,11 +24,16 @@ export function tallyMajority(votes: Record<string, string>): string | null {
   return best;
 }
 
+/**
+ * Every alive player is a valid target, including fellow wolves and the
+ * voting wolf's own self — the pack can choose to "eat" one of its own
+ * (or an individual wolf can pick themselves) as a deliberate misdirection
+ * play, same as any human-moderated game would allow. Nothing downstream
+ * (DeathQueue, VictoryConditions) assumes a wolf can only die to the
+ * village, so this needed no other changes.
+ */
 export function wolfKillEligibleTargetIds(ctx: EngineContext): string[] {
-  return ctx
-    .getAlivePlayers()
-    .filter((p) => p.roleId !== "LOUP_GAROU" && p.roleId !== "LOUP_BLANC")
-    .map((p) => p.id);
+  return ctx.getAlivePlayers().map((p) => p.id);
 }
 
 export function applyWolfKillVote(ctx: EngineContext, actor: InternalPlayer, action: NightActionSubmitted): void {

@@ -1,5 +1,5 @@
 import type { Server } from "socket.io";
-import { SOCKET_EVENTS, type AdminStatePayload } from "@loupgarou/shared";
+import { SOCKET_EVENTS, type AdminStatePayload, type RoleAssignedPayload } from "@loupgarou/shared";
 import type { GameEngine } from "@loupgarou/game-engine";
 import { gameRegistry } from "../gameRegistry.js";
 import { persistGame } from "../db/persistence.js";
@@ -59,6 +59,67 @@ export function pushChasseurPrompts(io: Server, engine: GameEngine): void {
   }
 }
 
+/**
+ * The Loup Vert's guess prompt (see LOUP_VERT_GUESS_PROMPT/SUBMIT — a
+ * dedicated side channel, independent of the pack's own KILL_VOTE prompt
+ * on the standard NIGHT_PROMPT channel, since he can have both pending the
+ * same night). Only pushed once he's actually got someone to guess about
+ * and hasn't already used tonight's single attempt.
+ */
+export function pushLoupVertGuessPrompts(io: Server, engine: GameEngine): void {
+  const deadlineAt = engine.getPhaseEndsAt() ?? Date.now() + engine.getConfig().timers.night * 1000;
+  for (const player of engine.getPlayers()) {
+    if (!player.isAlive || player.roleId !== "LOUP_VERT") continue;
+    if (engine.hasLoupVertGuessedTonight(player.id)) continue;
+    const eligibleTargetIds = engine.getLoupVertGuessEligibleTargets(player.id);
+    if (eligibleTargetIds.length === 0) continue;
+    io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.LOUP_VERT_GUESS_PROMPT, {
+      eligibleTargetIds,
+      guessableRoleIds: engine.getLoupVertGuessableRoleIds(),
+      deadlineAt,
+    });
+  }
+}
+
+/**
+ * The Loup Vert's borrowed power prompt, if he's currently holding one
+ * usable THIS night (see LOUP_VERT_STOLEN_POWER_PROMPT/SUBMIT). Reuses
+ * NightPromptPayload's exact shape so the client's existing NightPromptPanel
+ * renders it with no new UI code — the only twist is `roleId` here is the
+ * STOLEN role (what power he's using), not his own "LOUP_VERT".
+ */
+export function pushLoupVertStolenPowerPrompts(io: Server, engine: GameEngine): void {
+  const deadlineAt = engine.getPhaseEndsAt() ?? Date.now() + engine.getConfig().timers.night * 1000;
+  for (const player of engine.getPlayers()) {
+    if (!player.isAlive || player.roleId !== "LOUP_VERT") continue;
+    const request = engine.getLoupVertStolenPowerPrompt(player.id);
+    if (!request) continue;
+    const extras = engine.getPrivateRoleExtras(player.id);
+    io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.LOUP_VERT_STOLEN_POWER_PROMPT, {
+      roleId: extras.loupVertStolenPowerRoleId ?? player.roleId,
+      actionType: request.actionType,
+      eligibleTargetIds: request.eligibleTargetIds,
+      context: request.context,
+      deadlineAt,
+    });
+  }
+}
+
+/**
+ * Role-specific private extras (Barbie's power-available flag, Alien's
+ * remaining chances, Loup Vert's stolen-power status) — pushed to every
+ * player's own room on every sync, unconditionally of phase, so the UI
+ * always reflects the latest counters. Empty for anyone not holding one of
+ * these three roles (see GameEngine.getPrivateRoleExtras).
+ */
+export function pushPrivateRoleState(io: Server, engine: GameEngine): void {
+  for (const player of engine.getPlayers()) {
+    const extras = engine.getPrivateRoleExtras(player.id);
+    if (Object.keys(extras).length === 0) continue;
+    io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.PRIVATE_ROLE_STATE, extras);
+  }
+}
+
 export function pushChefSuccessionPrompt(io: Server, engine: GameEngine): void {
   const deadChefId = engine.getPendingChefSuccessionDeadChefId();
   if (!deadChefId) return;
@@ -71,10 +132,12 @@ export function pushChefSuccessionPrompt(io: Server, engine: GameEngine): void {
 
 export function pushRoleAssignments(io: Server, engine: GameEngine): void {
   for (const player of engine.getPlayers()) {
-    io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.ROLE_ASSIGNED, {
+    const payload: RoleAssignedPayload = {
       playerId: player.id,
       roleId: engine.getPlayerRole(player.id),
-    });
+      wolfTeammates: engine.getWolfTeammates(player.id),
+    };
+    io.to(roomForPlayer(player.id)).emit(SOCKET_EVENTS.ROLE_ASSIGNED, payload);
   }
 }
 

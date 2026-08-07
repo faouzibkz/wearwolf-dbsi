@@ -17,6 +17,14 @@ export interface InternalPlayer {
   joinedAt: number;
   reconnectToken: string;
   deathCause: string | null;
+  /**
+   * Human-readable "Nuit N" / "Jour N" moment of death (same label format as
+   * the admin log — see DeathQueue.processDeaths), or null while alive.
+   * Exists purely so the account/history layer (apps/server) can persist a
+   * displayable death moment per player without reaching into engine
+   * internals — it never drives any game logic itself.
+   */
+  deathMoment: string | null;
 
   // --- role-specific persistent state (kept on the player so it survives
   // reconnects and doesn't need a separate lookup table) ---
@@ -32,12 +40,40 @@ export interface InternalPlayer {
    * breaks on a second inspection of him by the same Voyante.
    */
   voyanteInspectionCounts: Record<string, number>;
+
+  // --- Loup Vert (see engine/LoupVert.ts for the full mechanic) ---
+  /** Which night (if any) he last attempted a guess — caps him at one attempt per night, from night 2 on. */
+  loupVertLastGuessNight: number | null;
+  /** True once he's correctly guessed CHASSEUR — permanent until he steals a different role (see LoupVert.ts). */
+  loupVertHasChasseurPower: boolean;
+  /** The role whose power he's currently borrowing for ONE night only (null if none, or if it was CHASSEUR — that's tracked separately above since it's permanent). */
+  loupVertStolenPowerRoleId: RoleId | null;
+  /** The villager he stole `loupVertStolenPowerRoleId` from — his per-player state (potions used, etc.) is what actually drives the borrowed prompt/action. */
+  loupVertStolenPowerSourcePlayerId: string | null;
+  /** Which night `loupVertStolenPowerRoleId` was granted — it's only usable THAT SAME night; compared against the current night to auto-expire it. */
+  loupVertStolenPowerGrantedNight: number | null;
+  /** Has he already used tonight's borrowed power? (Prevents reusing it if somehow prompted twice.) */
+  loupVertStolenPowerUsedTonight: boolean;
+
+  // --- Barbie (see engine/Barbie.ts) ---
+  /** One-shot power, once per game. */
+  barbiePowerUsed: boolean;
+
+  // --- Alien (see engine/Alien.ts) ---
+  /** Wrong guesses remaining against VILLAGE-team roles before he dies (starts at 2). */
+  alienVillageChancesLeft: number;
+  /** Wrong guesses remaining against LOUPS-team roles before he dies (starts at 1). */
+  alienWolfChancesLeft: number;
+  /** Private feedback for his own client after his most-recent guess this connection — consumed once read, never broadcast. */
+  alienLastGuessResult: "CORRECT" | "WRONG" | null;
 }
 
 export interface NightActionSubmitted {
   playerId: string;
   actionType: string;
   targetId?: string;
+  /** Only used by the Alien's "ALIEN_GUESS" action — which role he's claiming targetId holds. */
+  guessedRoleId?: RoleId;
 }
 
 /** Transient scratch space, rebuilt fresh every night. */
@@ -88,6 +124,31 @@ export interface TieDefenseState {
   currentSpeakerIndex: number;
 }
 
+/**
+ * DAY_VOTE's per-player voting turn order — same shape/mechanic as the
+ * other speaker queues, but each "turn" ends either when that player
+ * casts their vote (immediate advance) or their per-player timer expires
+ * (skipped, no vote recorded). Built fresh every time DAY_VOTE is (re)entered
+ * — see engine/DayVoteQueue.ts. Null whenever DAY_VOTE isn't active.
+ */
+export interface DayVoteQueueState {
+  order: string[];
+  currentSpeakerIndex: number;
+}
+
+/**
+ * CHEF_SECOND_DEBATE's bonus speaker queue — same shape/mechanic as the
+ * other speaker queues, but only built once the Chef has actually chosen
+ * who (if anyone) gets a bonus turn. Null while CHEF_SECOND_DEBATE is
+ * active but the Chef hasn't chosen yet (see GameStatePublic.secondDebateChoicePending),
+ * and also null whenever CHEF_SECOND_DEBATE isn't the current phase. See
+ * engine/SecondDebate.ts.
+ */
+export interface SecondDebateState {
+  order: string[];
+  currentSpeakerIndex: number;
+}
+
 export interface DayVoteState {
   votes: Map<string, string>; // voterId -> targetId
   round: number;
@@ -99,6 +160,14 @@ export interface GameInternalState {
   config: GameConfig;
   phase: Phase;
   paused: boolean;
+  /**
+   * Snapshot of "how much time was left" the moment pause() was called, so
+   * resume() can hand back exactly that much time instead of either
+   * silently continuing to count down invisible pause-time against the
+   * player, or granting a full fresh duration. Null whenever not paused
+   * (or the current phase has no timer at all).
+   */
+  pausedRemainingMs: number | null;
   players: Map<string, InternalPlayer>;
   playerOrder: string[];
   nightNumber: number;
@@ -106,6 +175,8 @@ export interface GameInternalState {
   chef: ChefElectionState;
   dayDiscussion: DayDiscussionState | null;
   tieDefense: TieDefenseState | null;
+  dayVoteQueue: DayVoteQueueState | null;
+  secondDebateQueue: SecondDebateState | null;
   dayVote: DayVoteState;
   corbeauMarkedPlayerId: string | null;
   nightScratch: NightScratch | null;
@@ -133,6 +204,8 @@ export interface GameInternalState {
   pendingChefSuccessionDeadChefId: string | null;
   pendingTieResolutionRule: TieResolutionRule | null;
   rolesRevealedToPlayers: boolean;
+  /** One-shot latch for GameEngine.consumeGameEndedNotification() — see that method's doc comment. */
+  gameEndedNotified: boolean;
   createdAt: number;
 }
 

@@ -1,3 +1,4 @@
+import type { RoleId } from "@loupgarou/shared";
 import type { EngineContext, InternalPlayer, NightScratch } from "../internalTypes";
 import { getRolesByNightPriority, ROLE_REGISTRY } from "../roles/registry";
 import type { NightActionRequest } from "../roles/Role";
@@ -67,6 +68,7 @@ export function submitNightAction(
   playerId: string,
   actionType: string,
   targetId?: string,
+  guessedRoleId?: RoleId,
 ): void {
   const player = ctx.getPlayer(playerId);
   if (!player.isAlive) throw new Error("Un joueur mort ne peut pas agir.");
@@ -74,8 +76,8 @@ export function submitNightAction(
   if (!role.applyNightAction) throw new Error("Ce rôle n'a pas d'action de nuit.");
   const scratch = ctx.state.nightScratch;
   if (!scratch) throw new Error("Aucune nuit en cours.");
-  scratch.submittedActions[playerId] = { playerId, actionType, targetId };
-  role.applyNightAction(ctx, player, { playerId, actionType, targetId });
+  scratch.submittedActions[playerId] = { playerId, actionType, targetId, guessedRoleId };
+  role.applyNightAction(ctx, player, { playerId, actionType, targetId, guessedRoleId });
 }
 
 /**

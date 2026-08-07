@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 function bootWithElectedChef(names: string[], roleCounts: Record<string, number>, seed: number) {
   const engine = GameEngine.createGame({ roleCounts: roleCounts as any }, seededRng(seed));
@@ -51,10 +51,11 @@ describe("Chef du village succession on death", () => {
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
 
-    for (const n of names) if (n !== "Chef") engine.castDayVote(ids[n]!, ids.Chef!);
-    const outcome = engine.tallyDayVoteAndProceed();
+    const votes: Record<string, string> = {};
+    for (const n of names) if (n !== "Chef") votes[ids[n]!] = ids.Chef!;
+    const outcome = castDayVotesInOrder(engine, votes);
 
-    expect(outcome.eliminatedId).toBe(ids.Chef);
+    expect(outcome?.eliminatedId).toBe(ids.Chef);
     expect(engine.getPhase()).toBe("DAY_VOTE"); // parked here, blocked
     expect(engine.getPendingChefSuccessionDeadChefId()).toBe(ids.Chef);
 

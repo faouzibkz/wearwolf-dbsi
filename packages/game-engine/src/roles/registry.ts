@@ -3,12 +3,15 @@ import type { RoleModule } from "./Role";
 import { villageoisRole } from "./villageois";
 import { loupGarouRole } from "./loupGarou";
 import { loupBlancRole } from "./loupBlanc";
+import { loupVertRole } from "./loupVert";
 import { sorciereRole } from "./sorciere";
 import { voyanteRole } from "./voyante";
 import { salvateurRole } from "./salvateur";
 import { chasseurRole } from "./chasseur";
 import { corbeauRole } from "./corbeau";
 import { mowgliRole } from "./mowgli";
+import { barbieRole } from "./barbie";
+import { alienRole } from "./alien";
 
 /**
  * Single registration point for every role module. This is the ONLY file
@@ -18,12 +21,15 @@ export const ROLE_REGISTRY: Record<RoleId, RoleModule> = {
   VILLAGEOIS: villageoisRole,
   LOUP_GAROU: loupGarouRole,
   LOUP_BLANC: loupBlancRole,
+  LOUP_VERT: loupVertRole,
   SORCIERE: sorciereRole,
   VOYANTE: voyanteRole,
   SALVATEUR: salvateurRole,
   CHASSEUR: chasseurRole,
   CORBEAU: corbeauRole,
   MOWGLI: mowgliRole,
+  BARBIE: barbieRole,
+  ALIEN: alienRole,
 };
 
 export function getRolesByNightPriority(): RoleModule[] {

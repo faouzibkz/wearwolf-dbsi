@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getServerNow } from "@/lib/serverClock";
 
+/**
+ * Anchored to getServerNow() (Date.now() corrected for measured
+ * client/server clock drift), not raw Date.now() — endsAt is a deadline
+ * the SERVER computed against its own clock, so comparing it against a
+ * possibly-skewed browser clock is what made this countdown look "stuck at
+ * 0:00" for several seconds on some machines even though the server itself
+ * was firing exactly on schedule. See lib/serverClock.ts.
+ */
 export function CountdownTimer({ endsAt }: { endsAt: number | null }) {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => getServerNow());
 
   useEffect(() => {
     if (!endsAt) return;
-    const interval = setInterval(() => setNow(Date.now()), 250);
+    const interval = setInterval(() => setNow(getServerNow()), 250);
     return () => clearInterval(interval);
   }, [endsAt]);
 

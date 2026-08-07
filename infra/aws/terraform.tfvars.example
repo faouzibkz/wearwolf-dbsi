@@ -1,0 +1,25 @@
+# Copy this file to terraform.tfvars (gitignored — never commit your real
+# values) and fill in the two required fields below. Everything else in
+# variables.tf already has a sensible default and only needs overriding if
+# you actually want something different.
+#
+# scripts/setup-aws.sh will offer to generate this file for you
+# interactively if it's missing, so you don't have to edit this by hand.
+
+# Your GitHub repo as "owner/repo", e.g. "octocat/loupgarou". Used to scope
+# the GitHub Actions OIDC role so ONLY workflow runs from this exact repo
+# can deploy to your AWS account.
+github_repository = "your-github-username/your-repo-name"
+
+# A domain you already own, with an existing Route53 hosted zone in THIS
+# AWS account (Route53 creates the zone automatically when you register a
+# domain through it; if your domain is registered elsewhere, you'll need to
+# create the hosted zone yourself and point your registrar's nameservers at
+# it first). No subdomain, no trailing dot — just the apex, e.g. "example.com".
+domain_name = "your-domain.com"
+
+# --- Everything below is optional — uncomment only if you want to override the default. ---
+
+# aws_region  = "eu-west-3"
+# db_name     = "loupgarou"
+# db_username = "loupgarou_admin"

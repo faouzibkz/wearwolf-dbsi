@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GameEngine } from "../engine/GameEngine";
-import { seededRng } from "./helpers";
+import { castDayVotesInOrder, seededRng } from "./helpers";
 
 /**
  * TIE_DEFENSE: the tied players (2 or 3) each get one randomly-ordered
@@ -32,11 +32,14 @@ describe("TIE_DEFENSE speaking order", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
 
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    const outcome = engine.tallyDayVoteAndProceed();
+    const outcome = castDayVotesInOrder(engine, {
+      [ids.A!]: ids.C!,
+      [ids.B!]: ids.D!,
+      [ids.C!]: ids.C!,
+      [ids.D!]: ids.D!,
+    });
 
-    expect(outcome.tie).toBe(true);
+    expect(outcome?.tie).toBe(true);
     expect(engine.getPhase()).toBe("TIE_DEFENSE");
     const order = engine.getPublicState().tieDefenseOrder!;
     expect(order.slice().sort()).toEqual([ids.C, ids.D].sort());
@@ -55,9 +58,12 @@ describe("TIE_DEFENSE speaking order", () => {
   it("advances speaker by speaker and auto-transitions to DAY_VOTE once the last tied player finishes", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.tallyDayVoteAndProceed();
+    castDayVotesInOrder(engine, {
+      [ids.A!]: ids.C!,
+      [ids.B!]: ids.D!,
+      [ids.C!]: ids.C!,
+      [ids.D!]: ids.D!,
+    });
 
     const order = engine.getPublicState().tieDefenseOrder!;
     expect(order).toHaveLength(2);
@@ -70,14 +76,33 @@ describe("TIE_DEFENSE speaking order", () => {
     const second = engine.advanceTieDefenseSpeaker();
     expect(second.done).toBe(true);
     expect(engine.getPhase()).toBe("DAY_VOTE"); // auto-advanced, no manual endTieDefense() needed
+
+    // Regression test for a real bug: this natural (non-manual) transition
+    // used to set the phase to DAY_VOTE WITHOUT building the per-voter
+    // queue, which permanently stranded the game — nobody's turn ever came
+    // up, so nobody could vote, the per-voter timer's auto-skip was a
+    // silent no-op forever, and even "force next phase" did nothing.
+    expect(engine.getPublicState().dayVoteOrder).not.toBeNull();
+    expect(engine.getPublicState().dayVoteOrder!.length).toBeGreaterThan(0);
+    expect(engine.getCurrentDayVoterId()).not.toBeNull();
+
+    // And voting must actually work: walk the whole round to completion.
+    const alive = engine.getPublicState().players.filter((p) => p.isAlive).map((p) => p.id);
+    const votes: Record<string, string> = {};
+    for (const id of alive) votes[id] = ids.C!;
+    const outcome = castDayVotesInOrder(engine, votes);
+    expect(outcome?.eliminatedId).toBe(ids.C);
   });
 
   it("manual endTieDefense() still works as a skip-ahead regardless of queue position", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.tallyDayVoteAndProceed();
+    castDayVotesInOrder(engine, {
+      [ids.A!]: ids.C!,
+      [ids.B!]: ids.D!,
+      [ids.C!]: ids.C!,
+      [ids.D!]: ids.D!,
+    });
 
     engine.endTieDefense();
     expect(engine.getPhase()).toBe("DAY_VOTE");
@@ -95,11 +120,10 @@ describe("round 2 starts with a clean ballot (no stale round-1 votes carried ove
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
 
-    // Round 1: A and B both vote, tying C vs D.
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    const round1 = engine.tallyDayVoteAndProceed();
-    expect(round1.tie).toBe(true);
+    // Round 1: only A and B vote (C and D, the eventual tied pair,
+    // abstain), tying C vs D.
+    const round1 = castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! });
+    expect(round1?.tie).toBe(true);
     engine.endTieDefense(); // -> DAY_VOTE round 2
 
     // The live tally must be empty right away — no leftover round-1 votes.
@@ -107,29 +131,24 @@ describe("round 2 starts with a clean ballot (no stale round-1 votes carried ove
     expect(engine.getPublicState().dayVoteTally).toEqual({});
 
     // Round 2: ONLY A votes (for C this time); B abstains entirely.
-    engine.castDayVote(ids.A!, ids.C!);
-    const round2 = engine.tallyDayVoteAndProceed();
+    const round2 = castDayVotesInOrder(engine, { [ids.A!]: ids.C! });
 
     // If B's stale round-1 vote for D had leaked through, this would be a
     // 1-1 tie again instead of a clean win for C.
-    expect(round2.tie).toBe(false);
-    expect(round2.eliminatedId).toBe(ids.C);
+    expect(round2?.tie).toBe(false);
+    expect(round2?.eliminatedId).toBe(ids.C);
   });
 
   it("lets a tied player change their vote in round 2 without their round-1 choice lingering", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
 
-    engine.castDayVote(ids.A!, ids.C!);
-    engine.castDayVote(ids.B!, ids.D!);
-    engine.tallyDayVoteAndProceed();
+    castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! });
     engine.endTieDefense();
 
     // Both flip their vote in round 2.
-    engine.castDayVote(ids.A!, ids.D!);
-    engine.castDayVote(ids.B!, ids.D!);
-    const round2 = engine.tallyDayVoteAndProceed();
+    const round2 = castDayVotesInOrder(engine, { [ids.A!]: ids.D!, [ids.B!]: ids.D! });
 
-    expect(round2.eliminatedId).toBe(ids.D);
+    expect(round2?.eliminatedId).toBe(ids.D);
   });
 });

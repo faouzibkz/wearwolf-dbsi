@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "../styles/globals.css";
+import { AccountProvider } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Loup-Garou — Compagnon de jeu",
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr" className="dark">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <AccountProvider>{children}</AccountProvider>
+      </body>
     </html>
   );
 }

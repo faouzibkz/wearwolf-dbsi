@@ -6,6 +6,46 @@ import { pushAllPrompts } from "./sync.js";
 
 const timers = new Map<string, NodeJS.Timeout>();
 
+/**
+ * Tracks, per game code, a fingerprint of "whatever this deadline is
+ * currently for" (phase + whichever sub-state actually matters for
+ * timing — current speaker, vote round, night/day number, or the set of
+ * pending blockers). schedulePhaseTimer() runs after EVERY state mutation
+ * (any chat message, vote, night action — see handlers.ts's sync()), so
+ * without this, every unrelated action would blow away and recompute
+ * phaseEndsAt from scratch, making the on-screen countdown visibly jump
+ * back up to full duration mid-count (the exact bug reported: "30 29 28
+ * 27... suddenly 40"). The fingerprint only changes when something that
+ * should genuinely reset the clock happens (new phase, new speaker, new
+ * vote round); any other call is a no-op for the deadline, though the
+ * pending setTimeout is still recreated every time so it stays anchored to
+ * the ALREADY-established deadline rather than restarting a full duration.
+ */
+const timerFingerprints = new Map<string, string>();
+
+function computeTimerFingerprint(engine: GameEngine): string {
+  if (engine.hasPendingBlockers()) {
+    return [
+      "BLOCKER",
+      engine.getPendingChasseurShooterIds().slice().sort().join(","),
+      engine.getPendingChefSuccessionDeadChefId() ?? "",
+    ].join("|");
+  }
+  const s = engine.getPublicState();
+  return [
+    s.phase,
+    s.nightNumber,
+    s.dayNumber,
+    s.currentSpeakerId ?? "",
+    s.dayDiscussionCurrentSpeakerId ?? "",
+    s.tieDefenseCurrentSpeakerId ?? "",
+    engine.getDayVoteRound(),
+    s.dayVoteCurrentVoterId ?? "",
+    s.secondDebateChoicePending ? "CHOICE_PENDING" : "",
+    s.secondDebateCurrentSpeakerId ?? "",
+  ].join("|");
+}
+
 const PHASE_TIMER_KEY: Partial<Record<Phase, keyof TimerConfig>> = {
   CHEF_CANDIDACY: "chefCandidacy",
   CHEF_DEBATE: "chefDebate",
@@ -20,6 +60,11 @@ const PHASE_TIMER_KEY: Partial<Record<Phase, keyof TimerConfig>> = {
   NIGHT: "night",
   MORNING: "morningReveal",
   DAY_DISCUSSION: "dayDiscussion",
+  // Reuses the "dayDiscussion" duration for both the Chef's choice window
+  // and each bonus speaker's turn — see GameConfig.secondDebateSlots's doc
+  // comment in packages/shared/src/types.ts for why there's no dedicated
+  // timer field for this phase.
+  CHEF_SECOND_DEBATE: "dayDiscussion",
   DAY_VOTE: "dayVote",
   DAY_VOTE_RESULT: "dayVoteResult",
   TIE_DEFENSE: "tieDefense",
@@ -54,11 +99,18 @@ export function clearPhaseTimer(code: string): void {
  * normal timer resume.
  */
 function schedulePendingBlockerTimer(io: Server, engine: GameEngine): void {
+  const code = engine.getCode();
+  const fingerprint = computeTimerFingerprint(engine);
   const seconds = Math.max(engine.getConfig().timers.chasseurShot, engine.getConfig().timers.chefSuccession);
-  engine.setPhaseTimer(seconds);
+
+  if (timerFingerprints.get(code) !== fingerprint || engine.getPhaseEndsAt() === null) {
+    engine.setPhaseTimer(seconds);
+    timerFingerprints.set(code, fingerprint);
+  }
 
   if (!engine.getConfig().autoProgress || engine.getPublicState().paused) return;
 
+  const delayMs = Math.max(0, engine.getPhaseEndsAt()! - Date.now());
   const timeout = setTimeout(() => {
     try {
       engine.resolvePendingBlockersIfAny();
@@ -66,22 +118,36 @@ function schedulePendingBlockerTimer(io: Server, engine: GameEngine): void {
       schedulePhaseTimer(io, engine);
     } catch (err) {
       console.error("[timer] pending-blocker auto-resolve failed", err);
+      // Do NOT let a failed auto-resolve permanently kill this game's timer
+      // chain (see the matching comment in schedulePhaseTimer's own catch
+      // block below for the full story) — best-effort re-arm so the next
+      // tick gets a chance to recover instead of the game silently hanging
+      // forever with a countdown that reaches zero and does nothing.
+      try {
+        pushAllPrompts(io, engine);
+        schedulePhaseTimer(io, engine);
+      } catch (err2) {
+        console.error("[timer] pending-blocker recovery reschedule also failed", err2);
+      }
     }
-  }, seconds * 1000);
+  }, delayMs);
 
-  timers.set(engine.getCode(), timeout);
+  timers.set(code, timeout);
 }
 
 /**
- * Called after every state mutation. Always refreshes `phaseEndsAt` for the
- * UI countdown; only actually schedules an auto-advance if the admin has
- * `autoProgress` enabled and the game isn't paused. Because this function
- * is re-invoked after every mutation (including the timer's own
- * auto-advance), phases chain automatically end-to-end without any
- * separate "scheduler loop".
+ * Called after every state mutation. Idempotent: `phaseEndsAt` (the UI
+ * countdown deadline) only actually moves when the timer fingerprint shows
+ * something timing-relevant genuinely changed (new phase, new speaker, new
+ * vote round) — see computeTimerFingerprint(). Only schedules an actual
+ * auto-advance `setTimeout` if the admin has `autoProgress` enabled and the
+ * game isn't paused. Because this function is re-invoked after every
+ * mutation (including the timer's own auto-advance), phases chain
+ * automatically end-to-end without any separate "scheduler loop".
  */
 export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
-  clearPhaseTimer(engine.getCode());
+  const code = engine.getCode();
+  clearPhaseTimer(code);
 
   if (engine.hasPendingBlockers()) {
     schedulePendingBlockerTimer(io, engine);
@@ -93,22 +159,51 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
 
   if (!key) {
     engine.setPhaseTimer(null);
+    timerFingerprints.delete(code);
     return;
   }
 
-  const seconds = engine.getConfig().timers[key];
-  engine.setPhaseTimer(seconds);
+  const fingerprint = computeTimerFingerprint(engine);
+  if (timerFingerprints.get(code) !== fingerprint || engine.getPhaseEndsAt() === null) {
+    // Genuinely new deadline: new phase, new speaker, new vote round, etc.
+    const seconds = engine.getConfig().timers[key];
+    engine.setPhaseTimer(seconds);
+    timerFingerprints.set(code, fingerprint);
+  }
+  // Else: an unrelated action happened mid-phase (chat, another player's
+  // vote, a night action) — leave the existing phaseEndsAt exactly where
+  // it is instead of resetting the visible countdown back to full.
 
   if (!engine.getConfig().autoProgress || engine.getPublicState().paused) return;
 
+  // Always re-anchor the actual setTimeout to the REMAINING time until the
+  // established deadline (not a fresh full duration) — this is what keeps
+  // the real auto-advance firing on schedule even though this function gets
+  // called repeatedly throughout the phase.
+  const delayMs = Math.max(0, engine.getPhaseEndsAt()! - Date.now());
   const timeout = setTimeout(() => {
     try {
       if (phase === "CHEF_DEBATE") {
         engine.advanceChefSpeaker();
       } else if (phase === "DAY_1_DISCUSSION" || phase === "DAY_DISCUSSION") {
         engine.advanceDaySpeaker();
+      } else if (phase === "CHEF_SECOND_DEBATE") {
+        // Two different deadlines share this one phase: the Chef's window
+        // to CHOOSE bonus speakers (times out to "nobody chosen" — straight
+        // to the vote), and — once chosen — each bonus speaker's own turn
+        // (times out like any other passe-la-parole timeout).
+        if (engine.isSecondDebateChoicePending()) {
+          engine.endChefSecondDebate();
+        } else {
+          engine.advanceSecondDebateSpeaker();
+        }
       } else if (phase === "TIE_DEFENSE") {
         engine.advanceTieDefenseSpeaker();
+      } else if (phase === "DAY_VOTE") {
+        // Per-voter turn timeout: skip whoever's turn it currently is (no
+        // vote recorded) and advance the queue. If that was the last voter,
+        // skipCurrentDayVoter() itself triggers the tally/phase transition.
+        engine.skipCurrentDayVoter();
       } else if (phase === "TIE_REVOTE") {
         // The one deliberately-manual checkpoint still gets a safety net:
         // if nobody (Chef/Admin) resolves it in time, break the tie at
@@ -120,9 +215,29 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
       pushAllPrompts(io, engine);
       schedulePhaseTimer(io, engine);
     } catch (err) {
+      // CRITICAL: this catch existed before but only ever logged and gave
+      // up — it did NOT reschedule anything. Every auto-advance (including
+      // the CHEF_SECOND_DEBATE -> DAY_VOTE and DAY_VOTE per-voter-skip
+      // transitions) runs through this exact callback, so ANY exception
+      // here — even a transient/unexpected one — used to permanently kill
+      // this game's entire auto-progress chain: no further timer would
+      // EVER fire again for this game, no matter how long anyone waited,
+      // with no error shown to any client. That's a real, serious failure
+      // mode (a countdown that reaches zero and does nothing, forever) —
+      // this is very likely what caused a real stuck-vote report. Recover
+      // by re-broadcasting state and re-arming the timer chain from
+      // whatever the CURRENT engine state actually is, so a transient
+      // failure can self-heal on the next tick instead of hanging the game
+      // forever.
       console.error("[timer] auto-advance failed", err);
+      try {
+        pushAllPrompts(io, engine);
+        schedulePhaseTimer(io, engine);
+      } catch (err2) {
+        console.error("[timer] auto-advance recovery reschedule also failed", err2);
+      }
     }
-  }, seconds * 1000);
+  }, delayMs);
 
-  timers.set(engine.getCode(), timeout);
+  timers.set(code, timeout);
 }
