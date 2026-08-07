@@ -17,6 +17,16 @@ resource "random_password" "admin_secret" {
   special = false
 }
 
+# Signs/verifies the httpOnly session cookie issued by /api/auth/login and
+# /api/auth/signup (see apps/server/src/auth/jwt.ts). Anyone who knows this
+# value can forge a valid session for ANY account, so it goes through the
+# exact same never-typed-by-a-human, never-in-the-task-definition path as
+# the DB password above — not the plaintext dev fallback in config.ts.
+resource "random_password" "auth_jwt_secret" {
+  length  = 48
+  special = false
+}
+
 resource "aws_secretsmanager_secret" "database_url" {
   name = "loupgarou/database-url"
 }
@@ -35,4 +45,13 @@ resource "aws_secretsmanager_secret" "admin_secret" {
 resource "aws_secretsmanager_secret_version" "admin_secret" {
   secret_id     = aws_secretsmanager_secret.admin_secret.id
   secret_string = random_password.admin_secret.result
+}
+
+resource "aws_secretsmanager_secret" "auth_jwt_secret" {
+  name = "loupgarou/auth-jwt-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "auth_jwt_secret" {
+  secret_id     = aws_secretsmanager_secret.auth_jwt_secret.id
+  secret_string = random_password.auth_jwt_secret.result
 }

@@ -82,6 +82,7 @@ resource "aws_ecs_task_definition" "server" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn # ECS Exec's ssmmessages permissions only — see iam.tf
 
   container_definitions = jsonencode([
     {
@@ -94,6 +95,12 @@ resource "aws_ecs_task_definition" "server" {
       environment = [
         { name = "SERVER_PORT", value = "4000" },
         { name = "CORS_ORIGIN", value = "https://${var.domain_name}" },
+        # The login session cookie must be marked Secure once it's actually
+        # served over HTTPS (true here) — see auth/cookies.ts. SameSite
+        # stays at its Lax default: web and API share one origin behind the
+        # ALB's path routing (alb.tf), not separate subdomains, so there's
+        # no cross-site cookie problem to solve with SameSite=None.
+        { name = "AUTH_COOKIE_SECURE", value = "true" },
       ]
       # "secrets", not "environment" — AWS resolves these from Secrets
       # Manager at container start and injects the real value directly
@@ -102,7 +109,15 @@ resource "aws_ecs_task_definition" "server" {
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
         { name = "ADMIN_SECRET", valueFrom = aws_secretsmanager_secret.admin_secret.arn },
+        { name = "AUTH_JWT_SECRET", valueFrom = aws_secretsmanager_secret.auth_jwt_secret.arn },
       ]
+      # Recommended (not strictly required) for ECS Exec: without an init
+      # process, a `prisma db push` run via `aws ecs execute-command` can
+      # leave zombie processes behind in the container after the session
+      # ends.
+      linuxParameters = {
+        initProcessEnabled = true
+      }
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -143,17 +158,37 @@ resource "aws_ecs_service" "web" {
   # relying on Terraform to infer it.
   depends_on = [aws_lb_listener.https]
 
+  # deploy-manual.ps1 and the GitHub Actions pipeline both register a BRAND
+  # NEW task definition revision on every deploy (pointing at that build's
+  # specific commit-SHA-tagged image, never just ":latest") and point this
+  # service at it directly via `aws ecs update-service`, entirely outside
+  # Terraform. Without this, the next `terraform apply` would "correct" that
+  # drift by rolling the live service back to whatever revision 1 was —
+  # silently downgrading production to a stale build. Terraform still
+  # creates/updates the task definition RESOURCE itself (so a fresh
+  # `container_definitions` template is always available for the deploy
+  # scripts' "clone latest, swap the image" step) — it just stops trying to
+  # force the SERVICE to use that exact revision.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   tags = {
     Name = "loupgarou-web-service"
   }
 }
 
 resource "aws_ecs_service" "server" {
-  name            = "loupgarou-server"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.server.arn
-  desired_count   = 1 # must stay 1 — the game keeps live state in memory, see packages/game-engine
-  launch_type     = "FARGATE"
+  name                   = "loupgarou-server"
+  cluster                = aws_ecs_cluster.main.id
+  task_definition        = aws_ecs_task_definition.server.arn
+  desired_count          = 1 # must stay 1 — the game keeps live state in memory, see packages/game-engine
+  launch_type            = "FARGATE"
+  # Lets you `aws ecs execute-command` an interactive shell into the running
+  # server task — the only way to reach the deliberately-private RDS
+  # instance for one-off maintenance like `npx prisma db push` (see iam.tf's
+  # ecs_task role and README for the exact command).
+  enable_execute_command = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -169,6 +204,17 @@ resource "aws_ecs_service" "server" {
 
   depends_on = [aws_lb_listener.https]
 
+  # Deliberately NOT ignoring task_definition drift here (unlike the web
+  # service): AWS rejects enable_execute_command=true outright unless the
+  # service's CURRENTLY ASSIGNED revision already has a task_role_arn ("The
+  # service couldn't be updated because a valid taskRoleArn is not being
+  # used") — so this one has to move together with enable_execute_command,
+  # in the same apply, at least once. After this settles (i.e. once
+  # deploy-manual.ps1/CI has registered a newer revision that carries
+  # task_role_arn forward — which it will, since it clones the family's
+  # latest revision rather than starting from scratch), it's worth adding
+  # the same ignore_changes block web has, so future `terraform apply` runs
+  # stop fighting the deploy scripts here too.
   tags = {
     Name = "loupgarou-server-service"
   }

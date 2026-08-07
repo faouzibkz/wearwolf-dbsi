@@ -33,7 +33,11 @@ services:
     # `db push` keeps this MVP simple (no pre-generated migration files
     # required to boot). Once you've run `npm run prisma:migrate` locally
     # to create real migrations, switch this to `prisma migrate deploy`.
-    command: sh -c "npx prisma db push --skip-generate && npx tsx src/index.ts"
+    # --accept-data-loss: this is a local dev database with no real player
+    # data to protect, so schema changes (e.g. adding a new unique
+    # constraint) should just apply instead of blocking startup waiting for
+    # a confirmation nobody can give inside a container.
+    command: sh -c "npx prisma db push --skip-generate --accept-data-loss && npx tsx src/index.ts"
 
   web:
     build:

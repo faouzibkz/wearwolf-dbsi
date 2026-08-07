@@ -276,6 +276,37 @@ the AWS console, or any log. To read a secret's actual value when you need it (e
 aws secretsmanager get-secret-value --secret-id loupgarou/admin-secret --query SecretString --output text --region eu-west-3
 ```
 
+### Applying a Prisma schema change to production
+
+The RDS instance is deliberately `publicly_accessible = false` (private subnets only, security
+group only allows the ECS tasks) — there's no bastion host and no VPN, so you can't point your own
+laptop's `DATABASE_URL` at it. `docker-compose.yml`'s `prisma db push` step only runs locally; the
+production container's `CMD` starts the server directly with no schema-sync step. Whenever
+`apps/server/prisma/schema.prisma` changes, after deploying the new image (which already has the
+change baked in via the Dockerfile's `npx prisma generate`), apply it to RDS with an interactive
+ECS Exec session instead:
+
+```bash
+# Needs the Session Manager plugin for the AWS CLI installed once:
+# https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
+
+TASK_ID=$(aws ecs list-tasks --cluster loupgarou-cluster --service-name loupgarou-server --query "taskArns[0]" --output text --region eu-west-3)
+
+aws ecs execute-command \
+  --cluster loupgarou-cluster \
+  --task "$TASK_ID" \
+  --container server \
+  --interactive \
+  --command "npx prisma db push --accept-data-loss" \
+  --region eu-west-3
+```
+
+This requires `enable_execute_command = true` on the server ECS service and the task role's
+`ssmmessages:*Channel` permissions (both already set up in `infra/aws/ecs.tf` / `iam.tf`) — run
+`terraform apply` once to provision them if this is your first time using it. `--accept-data-loss`
+is fine pre-launch (no real player accounts to lose); switch to real `prisma migrate` files (see
+the comment in `docker-compose.yml`) before that stops being true.
+
 ### Manual deploy commands (what the pipelines below automate)
 
 ```bash
