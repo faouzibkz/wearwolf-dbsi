@@ -4,6 +4,7 @@
 #
 #   - everything else  -> web target group (Next.js, port 3000)
 #   - "/socket.io/*"    -> server target group (Socket.IO, port 4000)
+#   - "/api/*"          -> server target group (REST: accounts/profile/history, port 4000)
 #
 # Routing by path instead of subdomain means the web app and the Socket.IO
 # connection share one origin (once the domain's attached, just
@@ -115,6 +116,26 @@ resource "aws_lb_listener_rule" "socketio" {
   condition {
     path_pattern {
       values = ["/socket.io/*"]
+    }
+  }
+}
+
+# The accounts/profile/history REST endpoints (apps/server/src/http/*) live
+# on the SAME server process as Socket.IO, under /api/* — without this
+# rule they'd fall through to the "everything else -> web" default action
+# and 404 against the Next.js app, which has no such routes.
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 11
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.server.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
     }
   }
 }

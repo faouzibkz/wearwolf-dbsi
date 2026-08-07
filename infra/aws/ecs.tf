@@ -204,17 +204,23 @@ resource "aws_ecs_service" "server" {
 
   depends_on = [aws_lb_listener.https]
 
-  # Deliberately NOT ignoring task_definition drift here (unlike the web
-  # service): AWS rejects enable_execute_command=true outright unless the
-  # service's CURRENTLY ASSIGNED revision already has a task_role_arn ("The
-  # service couldn't be updated because a valid taskRoleArn is not being
-  # used") — so this one has to move together with enable_execute_command,
-  # in the same apply, at least once. After this settles (i.e. once
-  # deploy-manual.ps1/CI has registered a newer revision that carries
-  # task_role_arn forward — which it will, since it clones the family's
-  # latest revision rather than starting from scratch), it's worth adding
-  # the same ignore_changes block web has, so future `terraform apply` runs
-  # stop fighting the deploy scripts here too.
+  # task_definition is intentionally left out of Terraform's management here,
+  # same reasoning as the web service below: deploy-manual.ps1/CI registers
+  # new revisions directly via the AWS CLI (SHA-tagged images) whenever a
+  # deploy happens, entirely outside Terraform's state. Without ignoring
+  # this, every `terraform apply` would revert the live service back to
+  # whatever old revision Terraform itself last created.
+  #
+  # This WAS temporarily removed (see git history) for exactly one apply,
+  # because AWS rejects enable_execute_command=true unless the service's
+  # CURRENTLY ASSIGNED revision already has a task_role_arn — that specific
+  # combined change had to move together, once. It's since settled (the
+  # task role carried forward into later revisions via deploy-manual.ps1
+  # cloning the family's latest revision), so it's safe to ignore again.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   tags = {
     Name = "loupgarou-server-service"
   }
