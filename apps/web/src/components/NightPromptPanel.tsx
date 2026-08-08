@@ -13,6 +13,7 @@ const ACTION_LABELS: Record<string, string> = {
   MARK: "Désignez un joueur qui recevra +2 votes demain.",
   CHOOSE_FATHER: "Choisissez en secret le joueur qui sera votre « père ».",
   ALIEN_GUESS: "Devinez le rôle exact d'un joueur (facultatif).",
+  ALIEN_GUESS_MANDATORY: "Vous avez précipité la nuit : vous devez deviner le rôle d'un joueur cette nuit.",
 };
 
 export function NightPromptPanel({
@@ -45,11 +46,14 @@ export function NightPromptPanel({
       guessableRoleIds: RoleId[];
       villageChancesLeft: number;
       wolfChancesLeft: number;
+      mustGuess: boolean;
     };
     const target = eligible.find((p) => p.id === selected);
     return (
       <div className="space-y-4 animate-fade-in">
-        <p className="text-sm text-night-100/80">{ACTION_LABELS.ALIEN_GUESS}</p>
+        <p className="text-sm text-night-100/80">
+          {ctx.mustGuess ? ACTION_LABELS.ALIEN_GUESS_MANDATORY : ACTION_LABELS.ALIEN_GUESS}
+        </p>
         <p className="text-xs text-night-100/50">
           Chances restantes — village : <strong className="text-gold-300">{ctx.villageChancesLeft}</strong>{" "}
           · loups : <strong className="text-blood-300">{ctx.wolfChancesLeft}</strong>. Une mauvaise
@@ -84,15 +88,17 @@ export function NightPromptPanel({
             </button>
           </>
         )}
-        <button
-          className="btn-secondary w-full text-sm"
-          onClick={() => {
-            onSubmit("SKIP");
-            setSentChoice({ label: "Aucune tentative cette nuit" });
-          }}
-        >
-          Ne rien tenter cette nuit
-        </button>
+        {!ctx.mustGuess && (
+          <button
+            className="btn-secondary w-full text-sm"
+            onClick={() => {
+              onSubmit("SKIP");
+              setSentChoice({ label: "Aucune tentative cette nuit" });
+            }}
+          >
+            Ne rien tenter cette nuit
+          </button>
+        )}
         <CountdownTimer endsAt={prompt.deadlineAt} />
       </div>
     );

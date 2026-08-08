@@ -11,10 +11,21 @@ function isWolfRole(roleId: RoleId): boolean {
 }
 
 /**
- * The Alien is a lone third faction: not Village, not Loups. Each night
- * (entirely optional — he decides whether to act at all, and this uses the
- * standard one-action-per-night NightResolver machinery, so at most once
- * per night) he may guess a target's exact role.
+ * The Alien is a lone third faction: not Village, not Loups. Each night he
+ * may guess a target's exact role, using the standard one-action-per-night
+ * NightResolver machinery (so at most once per night).
+ *
+ * Whether that guess is optional or mandatory depends on how the night was
+ * reached (house rule, on top of the base cahier de charge):
+ *  - A night reached normally (day discussion ran its course, or the timer
+ *    fired) leaves him free to guess or skip, same as any other role that
+ *    can pass.
+ *  - A night HE forced early via GameEngine.triggerAlienNightfall (cutting
+ *    the day's debate short) obligates him to guess someone that same
+ *    night — see scratch.alienForcedNightfall. Otherwise cutting the debate
+ *    short would be a strictly dominant free action with no downside
+ *    (skip the risk of a bad guess, still deprive the village of debate
+ *    time), which defeats the point of giving him the power at all.
  *
  *  - Correct: the target dies immediately (via the same DeathQueue every
  *    other death funnels through — see DeathQueue.ts — so it's revealed
@@ -46,12 +57,20 @@ export const alienRole: RoleModule = {
         guessableRoleIds: GUESSABLE_ROLE_IDS,
         villageChancesLeft: player.alienVillageChancesLeft,
         wolfChancesLeft: player.alienWolfChancesLeft,
+        mustGuess: ctx.state.nightScratch?.alienForcedNightfall === true,
       },
     };
   },
 
   applyNightAction(ctx, actor, action) {
-    if (action.actionType !== "ALIEN_GUESS" || !action.targetId || !action.guessedRoleId) return;
+    if (action.actionType !== "ALIEN_GUESS" || !action.targetId || !action.guessedRoleId) {
+      if (ctx.state.nightScratch?.alienForcedNightfall === true) {
+        throw new Error(
+          "Vous avez précipité la nuit : vous devez deviner le rôle d'un joueur cette nuit-là.",
+        );
+      }
+      return;
+    }
     const target = ctx.getPlayer(action.targetId);
     const guessedRoleId = action.guessedRoleId;
     const guessedWolf = isWolfRole(guessedRoleId);

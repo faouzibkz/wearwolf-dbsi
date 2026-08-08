@@ -638,6 +638,16 @@ export function registerSocketHandlers(io: Server): void {
             "INFO",
             "🐺 Le Loup vert a deviné votre rôle et vous a volé votre pouvoir. Vous êtes désormais un(e) simple villageois(e).",
           );
+          // The victim's roleId flipped to VILLAGEOIS this instant (see
+          // LoupVert.submitGuess) — re-send everyone's private ROLE_ASSIGNED
+          // so the victim's own client updates immediately and drops its
+          // now-stale night prompt (e.g. a Sorcière mid-way through deciding
+          // whether to heal/poison loses that UI right away), instead of
+          // silently keeping stale role/prompt state until the next
+          // reconnect. Harmless no-op for every other player: their roleId
+          // hasn't changed, and this is sent privately per-player, never to
+          // the room, so it can't leak who was targeted.
+          pushRoleAssignments(io, engine);
         } else {
           notifyPlayer(io, loupVertId, "INFO", "🐺 Mauvaise pioche — ce n'était pas son rôle.");
         }

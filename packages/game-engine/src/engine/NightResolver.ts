@@ -4,7 +4,7 @@ import { getRolesByNightPriority, ROLE_REGISTRY } from "../roles/registry";
 import type { NightActionRequest } from "../roles/Role";
 import { processDeaths } from "./DeathQueue";
 
-export function createNightScratch(nightNumber: number): NightScratch {
+export function createNightScratch(nightNumber: number, alienForcedNightfall = false): NightScratch {
   return {
     nightNumber,
     salvateurProtectedId: null,
@@ -20,6 +20,7 @@ export function createNightScratch(nightNumber: number): NightScratch {
     mowgliFatherChosen: false,
     submittedActions: {},
     deaths: [],
+    alienForcedNightfall,
   };
 }
 
@@ -76,8 +77,13 @@ export function submitNightAction(
   if (!role.applyNightAction) throw new Error("Ce rôle n'a pas d'action de nuit.");
   const scratch = ctx.state.nightScratch;
   if (!scratch) throw new Error("Aucune nuit en cours.");
-  scratch.submittedActions[playerId] = { playerId, actionType, targetId, guessedRoleId };
+  // Apply first, record second: a role that rejects the action (e.g. the
+  // Alien refusing a "SKIP" on a night he forced himself — see
+  // roles/alien.ts) must throw BEFORE this player is marked as having
+  // acted tonight, otherwise collectNightPrompts' onlyPending filter would
+  // hide their prompt forever despite no valid action ever having landed.
   role.applyNightAction(ctx, player, { playerId, actionType, targetId, guessedRoleId });
+  scratch.submittedActions[playerId] = { playerId, actionType, targetId, guessedRoleId };
 }
 
 /**

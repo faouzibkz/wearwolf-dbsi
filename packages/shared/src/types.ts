@@ -317,7 +317,8 @@ export const ROLE_METADATA: Record<RoleId, RoleDefinitionMeta> = {
     shortDescription:
       "Solitaire, contre le village ET contre les loups. Chaque nuit (s'il le souhaite), devine le " +
       "rôle d'un joueur : juste, il meurt sur-le-champ ; faux, il perd une chance (2 contre le village, " +
-      "1 seule contre les loups) — la dernière chance perdue le tue.",
+      "1 seule contre les loups) — la dernière chance perdue le tue. Il peut aussi précipiter la nuit " +
+      "en pleine discussion de jour, mais s'il le fait, deviner devient obligatoire cette nuit-là.",
     hasNightAction: true,
     hasDeathTrigger: false,
   },

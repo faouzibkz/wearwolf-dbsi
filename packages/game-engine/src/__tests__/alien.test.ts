@@ -170,9 +170,60 @@ describe("Alien", () => {
 
       expect(engine.getPhase()).toBe("NIGHT");
       expect(engine.getPublicState().nightNumber).toBe(1);
-      // A completely normal night: the Alien's own guess prompt (and anyone
-      // else's) is available exactly as it would be on any other night.
+      // A night like any other in every other respect (prompts, targets,
+      // resolution) EXCEPT that his own guess is now mandatory — see the
+      // dedicated tests below.
       expect(engine.canAlienForceNightfall(ids[alienId]!)).toBe(false); // no longer in a day discussion
+    });
+
+    it("makes the guess mandatory that night: SKIP is rejected and his prompt stays owed until he actually guesses", () => {
+      const names = ["Chef", "Alien", "V1", "V2", "V3"];
+      const engine = GameEngine.createGame({ roleCounts: { ALIEN: 1 } as any }, seededRng(7));
+      const ids: Record<string, string> = {};
+      for (const n of names) ids[n] = engine.addPlayer(n).id;
+      engine.startGame();
+      const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
+      const alienId = names.find((n) => roles.get(ids[n]!) === "ALIEN")!;
+      engine.volunteerForChef(ids[names[0]!]!);
+      engine.forceStartChefDebate();
+      engine.advanceChefSpeaker();
+      for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
+      engine.tallyChefVoteAndProceed();
+      engine.proceedFromChefRevealToDiscussion();
+
+      engine.triggerAlienNightfall(ids[alienId]!);
+
+      const prompts = engine.getNightPrompts();
+      const alienPrompt = prompts.find((p) => p.player.id === ids[alienId]!);
+      expect(alienPrompt).toBeTruthy();
+      expect((alienPrompt!.request.context as { mustGuess: boolean }).mustGuess).toBe(true);
+
+      expect(() => engine.submitNightAction(ids[alienId]!, "SKIP")).toThrow();
+
+      // The rejected SKIP must not have consumed his turn — see
+      // NightResolver.submitNightAction's apply-then-record ordering — so
+      // his prompt is still owed exactly as before the failed attempt.
+      expect(engine.getNightPrompts().some((p) => p.player.id === ids[alienId]!)).toBe(true);
+
+      // A real guess is accepted normally and does close out his turn.
+      const target = names.find((n) => n !== alienId && n !== "Chef")!;
+      expect(() =>
+        engine.submitNightAction(ids[alienId]!, "ALIEN_GUESS", ids[target]!, "SALVATEUR" as any),
+      ).not.toThrow();
+      expect(engine.getNightPrompts().some((p) => p.player.id === ids[alienId]!)).toBe(false);
+    });
+
+    it("a normal (non-forced) night still lets the Alien skip freely, exactly as before", () => {
+      const names = ["Chef", "Alien", "V1", "V2", "V3"];
+      const { engine, ids, roles } = bootToNight1(7, { ALIEN: 1 }, names);
+      const alienId = names.find((n) => roles.get(ids[n]!) === "ALIEN")!;
+
+      const alienPrompt = engine.getNightPrompts().find((p) => p.player.id === ids[alienId]!);
+      expect((alienPrompt!.request.context as { mustGuess: boolean }).mustGuess).toBe(false);
+
+      expect(() => engine.submitNightAction(ids[alienId]!, "SKIP")).not.toThrow();
+      expect(engine.getPublicState().players.find((p) => p.id === ids[alienId]!)!.isAlive).toBe(true);
+      expect(engine.getAlienLastGuessResult(ids[alienId]!)).toBeNull();
     });
 
     it("later days: skips whatever's left of discussion, the second debate, AND that day's vote entirely", () => {

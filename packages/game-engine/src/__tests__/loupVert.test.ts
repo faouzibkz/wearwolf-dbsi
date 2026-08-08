@@ -182,6 +182,27 @@ describe("Loup Vert", () => {
     expect(extras.loupVertStolenPowerRoleId).toBe("VOYANTE");
   });
 
+  it("the stripped victim instantly loses their night prompt and cannot act with their old power", () => {
+    const { engine, loupVertId, voyanteId } = bootToNight2(2);
+
+    // Before the steal, the Voyante is still owed her INSPECT prompt tonight.
+    const promptsBefore = engine.getNightPrompts();
+    expect(promptsBefore.some((p) => p.player.id === voyanteId)).toBe(true);
+
+    engine.submitLoupVertGuess(loupVertId, voyanteId, "VOYANTE");
+
+    // She's dropped from the list of players still owed a prompt this
+    // night — the server will simply stop re-sending her a NIGHT_PROMPT on
+    // the next broadcast (see apps/server/src/socket/broadcast.ts).
+    const promptsAfter = engine.getNightPrompts();
+    expect(promptsAfter.some((p) => p.player.id === voyanteId)).toBe(false);
+
+    // And even if she still had her old prompt open client-side and tried
+    // to act on it anyway, the engine rejects it outright — VILLAGEOIS has
+    // no applyNightAction, so this can never silently double-resolve.
+    expect(() => engine.submitNightAction(voyanteId, "INSPECT", loupVertId)).toThrow();
+  });
+
   it("joins the wolf room and appears in wolf-teammate lists", () => {
     const { engine, ids, loupVertId } = bootToNight2(2);
     expect(engine.getWolfRoomMemberIds()).toContain(loupVertId);

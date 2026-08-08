@@ -455,13 +455,17 @@ export class GameEngine {
     }
     this.snapshot();
     this.appendLog("La nuit tombe soudainement, avant la fin des débats.");
-    this.startNight();
+    // forcedByAlien=true: this is the one night where his guess stops being
+    // optional (see roles/alien.ts's applyNightAction) — cutting a debate
+    // short only to then not use the night would be strictly better than
+    // ever guessing during a normal night, which doesn't make sense.
+    this.startNight(true);
   }
 
-  private startNight(): void {
+  private startNight(forcedByAlien = false): void {
     this.snapshot();
     this.state.nightNumber += 1;
-    this.state.nightScratch = NightResolver.createNightScratch(this.state.nightNumber);
+    this.state.nightScratch = NightResolver.createNightScratch(this.state.nightNumber, forcedByAlien);
     this.state.phase = "NIGHT";
     // Reset here — at the START of the night's resolution unit — rather
     // than inside resolveNightAndProceed() (the OLD reset point): the

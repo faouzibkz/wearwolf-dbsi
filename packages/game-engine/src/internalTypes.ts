@@ -92,6 +92,15 @@ export interface NightScratch {
   mowgliFatherChosen: boolean;
   submittedActions: Record<string, NightActionSubmitted>; // playerId -> action
   deaths: string[]; // resolved at end of night resolution
+  /**
+   * True only for the one night this was triggered via
+   * GameEngine.triggerAlienNightfall (the Alien cutting a day discussion
+   * short) — false for every ordinary night, including night 1. Read by
+   * roles/alien.ts to make the guess mandatory on a forced night: skipping
+   * a debate to reach night early only makes sense if it's spent doing
+   * something, otherwise it's a strictly-dominant free action.
+   */
+  alienForcedNightfall: boolean;
 }
 
 export interface ChefElectionState {

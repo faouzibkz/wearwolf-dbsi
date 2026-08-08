@@ -68,6 +68,7 @@ export default function PlayPage() {
   const announcedDeathsRef = useRef<string>("");
   const soundEnabledRef = useRef<boolean>(true);
   const prevPhaseRef = useRef<GameStatePublic["phase"] | null>(null);
+  const prevRoleRef = useRef<RoleId | null>(null);
 
   useEffect(() => {
     const stored = loadPlayerSession(code);
@@ -124,6 +125,16 @@ export default function PlayPage() {
       }
     });
     socket.on(SOCKET_EVENTS.ROLE_ASSIGNED, (payload: RoleAssignedPayload) => {
+      // A role change mid-game (currently only: Loup Vert stealing this
+      // player's power on night 2+, which instantly demotes them to
+      // VILLAGEOIS) means any night prompt already on screen was built for
+      // a power this player no longer has — drop it immediately instead of
+      // leaving a stale "heal/poison/inspect" UI up that would just error
+      // out if they tried to use it.
+      if (prevRoleRef.current !== null && prevRoleRef.current !== payload.roleId) {
+        setPrompt(null);
+      }
+      prevRoleRef.current = payload.roleId;
       setRole(payload.roleId);
       setWolfTeammates(payload.wolfTeammates ?? []);
     });
