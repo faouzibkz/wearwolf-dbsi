@@ -231,6 +231,12 @@ Aucun des 6 points ne touche `applyNightAction`/`resolve`/`isActiveOnNight` d'un
 
 Le vraiment nouveau, c'est : la nuit séquentielle (point 1, la plus grosse pièce), la présentation de nuit (points 2-6), et Spectateur + Afterlife (points 7-8).
 
+### Décisions confirmées avec l'utilisateur le 8 août 2026 (avant un travail autonome sans supervision directe)
+
+- **Nuit séquentielle = mode opt-in, pas un remplacement total** : nouveau champ `GameConfig.nightMode: "SIMULTANEOUS" | "SEQUENTIAL"`, défaut `"SIMULTANEOUS"` (comportement actuel, zéro régression possible — toutes les parties existantes et tous les tests actuels continuent de passer par le chemin `NightResolver` inchangé). Le mode séquentiel est un **second chemin additif**, choisi par l'admin à la création de la partie, jamais un remplacement du premier.
+- **Priorité : profondeur plutôt que largeur.** Chaque feature ci-dessous doit être finie, testée et committée avant de passer à la suivante, dans l'ordre 17.1 → 17.2 → 17.3 → 17.4. Si le travail autonome s'arrête avant la fin de la liste, il doit s'arrêter sur un point propre (une feature entièrement finie), jamais au milieu d'une feature à moitié câblée.
+- **Contraintes de l'environnement d'exécution autonome** : pas de Docker installé (impossible de lancer `docker compose up --build` soi-même — vérification via la suite de tests + `tsc` + `next build`, comme à chaque phase précédente ; l'utilisateur doit quand même faire un test Docker local avant de déployer). Pas d'identifiants `git push` (commits locaux uniquement, comme pour les Phases 2/3).
+
 ### 17.1 Nuit séquentielle (point 1-6 du document) — le plus gros morceau, et la fondation
 
 **Comment ça s'articule avec l'existant** : `packages/game-engine` a déjà tout ce qu'il faut pour construire ça *par-dessus*, sans toucher aux rôles :
