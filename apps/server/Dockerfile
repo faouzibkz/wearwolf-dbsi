@@ -15,12 +15,14 @@ RUN apt-get update -y \
 COPY package.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/game-engine/package.json packages/game-engine/package.json
+COPY packages/rating/package.json packages/rating/package.json
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN npm install --no-audit --no-fund
 
 COPY packages/shared packages/shared
 COPY packages/game-engine packages/game-engine
+COPY packages/rating packages/rating
 COPY apps/server apps/server
 
 WORKDIR /app/apps/server
