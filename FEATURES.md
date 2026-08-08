@@ -244,7 +244,7 @@ Le vraiment nouveau, c'est : la nuit séquentielle (point 1, la plus grosse piè
 3. Nouveaux événements socket (`NIGHT_STEP_BEGIN`/`NIGHT_STEP_END` ou équivalent) + écran admin de configuration (point 4) + nouveau composant web de présentation séquentielle (point 5-6, remplace l'affichage actuel « tous les prompts actifs en même temps »).
 
 **Points d'attention identifiés, à trancher pendant la conception (pas des bloqueurs, juste des décisions à ne pas oublier)** :
-- **Loup Vert** a un deuxième pouvoir (deviner/voler, `engine/LoupVert.ts`) qui vit hors du système de rôle standard, sur des canaux socket dédiés, justement parce qu'il peut avoir jusqu'à 3 choses en attente en même temps. Il faudra décider où son étape de deviner/voler se place dans la séquence (probablement dans l'étape « Loups », en parallèle du vote de meute) — et une piste intéressante : si le pouvoir volé correspond à un rôle plus tardif dans l'ordre (ex. vole la Sorcière), le système séquentiel pourrait naturellement lui faire utiliser ce pouvoir *à la place de la Sorcière*, à ce moment précis de la séquence plutôt que dans sa propre étape — plus élégant que ce qui existe aujourd'hui, à confirmer avec l'utilisateur.
+- **Loup Vert — tranché avec l'utilisateur le 8 août 2026 (Option A)** : le pouvoir volé (deviner/voler, `engine/LoupVert.ts`) s'utilise immédiatement à l'étape « Loups » de la séquence, pas à l'étape du rôle volé — pas d'attente jusqu'au tour normal de la Sorcière/du Salvateur, etc. Confirmé au passage (déjà vrai et testé dans le code actuel, aucun changement nécessaire) : la victime devient Villageois simple **instantanément cette même nuit** (ne peut plus soigner/protéger/tuer cette nuit-là), et le pouvoir volé du Chasseur reste **permanent** pour le reste de la partie (deviner un autre rôle ensuite fait perdre ce pouvoir permanent en échange du nouveau, à usage unique cette nuit-là).
 - **Dépendances d'ordre déjà existantes à préserver** : la Sorcière a besoin de connaître la cible des loups avant d'agir — déjà garanti aujourd'hui par `nightPriority`, doit rester garanti à l'identique dans le système séquentiel (résoudre l'étape des loups avant d'ouvrir celle de la Sorcière, pas juste envoyer les prompts dans l'ordre sans attendre la résolution).
 - **Salle des loups** (vote collectif, état `wolfRoom`) devient « l'étape Loups » avec son propre timer — compatible, juste un habillage différent d'un mécanisme qui existe déjà.
 
@@ -270,7 +270,7 @@ Le document propose : Nuit séquentielle → Présentation → Spectateur/Afterl
 3. **17.3 Spectateur + Afterlife** (indépendant, peut être fait avant/en parallèle de 17.1-17.2).
 4. **17.4 Performance Score v2 → Badges → Classements** (indépendant, peut être fait avant/en parallèle — commencer par le journal d'événements).
 
-**À confirmer avec l'utilisateur avant de commencer** : l'ordre ci-dessus convient-il, ou préfère-t-il un gain visible rapide (17.4) avant le plus gros chantier (17.1) ? Et la question Loup Vert soulevée en 17.1 (où utilise-t-il un pouvoir volé dans la séquence ?).
+**À confirmer avec l'utilisateur avant de commencer** : l'ordre ci-dessus convient-il, ou préfère-t-il un gain visible rapide (17.4) avant le plus gros chantier (17.1) ? (Question Loup Vert déjà tranchée — voir 17.1, Option A.)
 
 ---
 
