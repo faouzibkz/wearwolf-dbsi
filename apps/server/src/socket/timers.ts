@@ -43,6 +43,15 @@ function computeTimerFingerprint(engine: GameEngine): string {
     s.dayVoteCurrentVoterId ?? "",
     s.secondDebateChoicePending ? "CHOICE_PENDING" : "",
     s.secondDebateCurrentSpeakerId ?? "",
+    // Cahier de charge #2 §17.1 — SEQUENTIAL night mode only: the step
+    // index within night N. Without this, the fingerprint would stay
+    // identical across every step of the same night (phase/nightNumber
+    // alone don't change step-to-step), so schedulePhaseTimer would never
+    // recognize "a new step started" as a genuinely new deadline and the
+    // countdown would keep counting down from whatever night 1's very
+    // first step had left, instead of resetting for each role's own
+    // configured duration.
+    engine.isSequentialNightMode() ? `STEP:${engine.getNightStepProgress().stepIndex}` : "",
   ].join("|");
 }
 
@@ -163,10 +172,22 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
     return;
   }
 
+  // Cahier de charge #2 §17.1 — SEQUENTIAL night mode only. Every OTHER
+  // phase (including a plain SIMULTANEOUS night) keeps using the single
+  // flat `timers.night` duration below, completely unchanged.
+  const isSequentialNight = phase === "NIGHT" && engine.isSequentialNightMode();
+
   const fingerprint = computeTimerFingerprint(engine);
   if (timerFingerprints.get(code) !== fingerprint || engine.getPhaseEndsAt() === null) {
-    // Genuinely new deadline: new phase, new speaker, new vote round, etc.
-    const seconds = engine.getConfig().timers[key];
+    // Genuinely new deadline: new phase, new speaker, new vote round, new
+    // night step, etc. In SEQUENTIAL mode each step gets its OWN
+    // admin-configured duration (falling back to timers.night if for some
+    // reason there's no current step — e.g. a pending blocker already
+    // handled above, or the night is about to resolve) instead of one
+    // flat per-night duration.
+    const seconds = isSequentialNight
+      ? engine.getCurrentNightStepDurationSeconds() ?? engine.getConfig().timers.night
+      : engine.getConfig().timers[key];
     engine.setPhaseTimer(seconds);
     timerFingerprints.set(code, fingerprint);
   }
@@ -183,7 +204,16 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
   const delayMs = Math.max(0, engine.getPhaseEndsAt()! - Date.now());
   const timeout = setTimeout(() => {
     try {
-      if (phase === "CHEF_DEBATE") {
+      if (isSequentialNight) {
+        // Timer-expiry path for the CURRENT step only (see its own doc
+        // comment on GameEngine.forceAdvanceNightStep): force-SKIPs
+        // whoever's still owed an action this step (harmless no-op for
+        // every role except a forced-nightfall Alien, whose mandatory
+        // guess gets auto-resolved at random instead), then advances —
+        // possibly straight through several more already-complete steps,
+        // or all the way to resolving the night into MORNING.
+        engine.forceAdvanceNightStep();
+      } else if (phase === "CHEF_DEBATE") {
         engine.advanceChefSpeaker();
       } else if (phase === "DAY_1_DISCUSSION" || phase === "DAY_DISCUSSION") {
         engine.advanceDaySpeaker();

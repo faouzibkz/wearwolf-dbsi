@@ -47,6 +47,14 @@ import { pushAllPrompts } from "./sync.js";
  * call site that could possibly end the game to remember to check.
  */
 function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
+  // Cahier de charge #2 §17.1 — SEQUENTIAL night mode only (a no-op call
+  // outside NIGHT/SEQUENTIAL, see GameEngine.isSequentialNightMode()):
+  // every mutation funnels through this one sync(), so this is the single
+  // place that needs to know about step advancement — no individual
+  // handler (NIGHT_ACTION_SUBMIT, the Loup Vert side-channels, etc.) has to
+  // remember to call it itself. May itself resolve the night and transition
+  // to MORNING if this was the last outstanding step.
+  if (engine.isSequentialNightMode()) engine.advanceNightStepIfComplete();
   pushAllPrompts(io, engine);
   schedulePhaseTimer(io, engine);
   if (engine.consumeGameEndedNotification()) {

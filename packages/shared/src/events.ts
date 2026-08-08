@@ -294,12 +294,19 @@ export interface NightPromptPayload {
 
 /** SEQUENTIAL night mode only — see SOCKET_EVENTS.NIGHT_STEP_STATE's doc comment. Entirely public, no secret info. */
 export interface NightStepStatePayload {
-  /** null once every step this night is done and the night is about to resolve (no more turns left, resolution/MORNING is imminent). */
-  currentStepRoleId: RoleId | null;
-  /** 1-based position of currentStepRoleId within this night's step order, for a "3 / 6" style progress display. 0 if currentStepRoleId is null. */
+  /**
+   * Null once every step this night is done and the night is about to
+   * resolve (no more turns left, resolution/MORNING is imminent). More
+   * than one role id when several roles share a single collective step —
+   * e.g. LOUP_GAROU + LOUP_BLANC + LOUP_VERT all feed the same pack vote,
+   * see NightSequencer.ts's doc comment — so the client can render all of
+   * them (e.g. "Les Loups agissent...") rather than assume exactly one.
+   */
+  currentStepRoleIds: RoleId[] | null;
+  /** 1-based position of the current step within this night's step order, for a "3 / 6" style progress display. 0 if currentStepRoleIds is null. */
   stepIndex: number;
   totalSteps: number;
-  /** Same convention as NightPromptPayload.deadlineAt — epoch ms. Null once currentStepRoleId is null. */
+  /** Same convention as NightPromptPayload.deadlineAt — epoch ms. Null once currentStepRoleIds is null. */
   stepDeadlineAt: number | null;
 }
 

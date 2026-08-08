@@ -1,5 +1,10 @@
 import type { Server } from "socket.io";
-import { SOCKET_EVENTS, type AdminStatePayload, type RoleAssignedPayload } from "@loupgarou/shared";
+import {
+  SOCKET_EVENTS,
+  type AdminStatePayload,
+  type NightStepStatePayload,
+  type RoleAssignedPayload,
+} from "@loupgarou/shared";
 import type { GameEngine } from "@loupgarou/game-engine";
 import { gameRegistry } from "../gameRegistry.js";
 import { persistGame } from "../db/persistence.js";
@@ -45,6 +50,32 @@ export function pushNightPrompts(io: Server, engine: GameEngine): void {
       deadlineAt,
     });
   }
+}
+
+/**
+ * Cahier de charge #2 §17.1 — SEQUENTIAL night mode only. Public companion
+ * to pushNightPrompts: tells EVERYONE (not just whoever has to act) whose
+ * turn it currently is, so a player with nothing to do this step can render
+ * "the village is sleeping / Le Voyante consulte ses visions..." instead of
+ * a blank screen, and so the client can show a "3 / 6" progress indicator.
+ * A no-op in SIMULTANEOUS mode (engine.getCurrentNightStepRoleIds() is
+ * always null there — see GameEngine.isSequentialNightMode()) and outside
+ * NIGHT entirely, so this is safe to call unconditionally from pushAllPrompts.
+ */
+export function pushNightStepState(io: Server, engine: GameEngine): void {
+  if (!engine.isSequentialNightMode()) return;
+  const currentStepRoleIds = engine.getCurrentNightStepRoleIds();
+  const { stepIndex, totalSteps } = engine.getNightStepProgress();
+  // Same fallback convention as pushNightPrompts/pushLoupVertGuessPrompts
+  // above: normally schedulePhaseTimer (timers.ts) has already set a real
+  // deadline by the time this fires, but fall back to "starting now, for
+  // this step's own configured duration" rather than emit a deadline that
+  // already looks expired if this is ever called first.
+  const stepDeadlineAt = currentStepRoleIds
+    ? engine.getPhaseEndsAt() ?? Date.now() + (engine.getCurrentNightStepDurationSeconds() ?? engine.getConfig().timers.night) * 1000
+    : null;
+  const payload: NightStepStatePayload = { currentStepRoleIds, stepIndex, totalSteps, stepDeadlineAt };
+  io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.NIGHT_STEP_STATE, payload);
 }
 
 export function pushChasseurPrompts(io: Server, engine: GameEngine): void {

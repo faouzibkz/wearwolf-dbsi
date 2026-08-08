@@ -7,6 +7,7 @@ import {
   pushLoupVertGuessPrompts,
   pushLoupVertStolenPowerPrompts,
   pushNightPrompts,
+  pushNightStepState,
   pushPrivateRoleState,
 } from "./broadcast.js";
 import { pushWolfRoomState } from "./wolfRoom.js";
@@ -34,6 +35,7 @@ export function pushAllPrompts(io: Server, engine: GameEngine): void {
     pushWolfRoomState(io, engine);
     pushLoupVertGuessPrompts(io, engine);
     pushLoupVertStolenPowerPrompts(io, engine);
+    pushNightStepState(io, engine); // SEQUENTIAL mode only — no-op (see its own doc comment) otherwise
   }
   // Resource counters (Barbie's power-available flag, Alien's chances,
   // Loup Vert's stolen-power status) — private to each player, phase-agnostic.
