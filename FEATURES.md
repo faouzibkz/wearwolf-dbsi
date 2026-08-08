@@ -25,7 +25,7 @@ Détail complet dans `ARCHITECTURE.md` §9 « Pièges connus ».
 | **Phase 2a** | Stats avancées : séries de victoires, nuits survécues en moyenne, répartition des causes de mort | ✅ **Fait — en production** |
 | **Phase 2b** | Rating générique (Elo-inspiré) + coefficients de difficulté par rôle + Performance Score (v1) + ratings spécialisés | ✅ **Fait — en production** |
 | **Phase 3** | XP/Niveaux + MVP (vote post-partie) | ✅ **Fait — testé, déployé le 8 août 2026** |
-| **Phase 4** (cahier de charge #2 — voir section 17) | Nuit séquentielle + présentation + spectateur/Afterlife | ⬜ À faire |
+| **Phase 4** (cahier de charge #2 — voir section 17) | Nuit séquentielle (§17.1) + présentation (§17.2) + spectateur/Afterlife (§17.3) | ✅ **Fait — testé localement (211 tests), non déployé en prod** |
 | **Phase 5** (cahier de charge #2 — voir section 17) | Performance Score par rôle (v2, avec journal d'événements) | ⬜ À faire |
 | **Phase 6** (cahier de charge #2 — voir section 17) | Badges + Achievements | ⬜ À faire |
 | **Phase 7** (cahier de charge #2 — voir section 17) | Classements + comparaison de profils | ⬜ À faire |
@@ -218,6 +218,8 @@ Contrainte transversale, vérifiée à chaque étape livrée jusqu'ici :
 
 ## 17. Cahier de charge #2 (reçu le 8 août 2026) — Expérience de jeu & progression sociale
 
+> **Statut au 8 août 2026 (fin de session autonome) : 17.1, 17.2 et 17.3 livrés, testés, committés localement (voir « Notes d'implémentation » plus bas). 17.4 (Performance v2 / Badges / Classements) reste à faire.**
+
 > Document séparé du cahier de charge #1 ci-dessus, volontairement scopé pour ne **rien changer aux règles/mécaniques des rôles existants** — uniquement l'orchestration de la nuit, la présentation, et une couche progression/social entièrement nouvelle. Six features, groupées en 4 phases ci-dessous par dépendance technique réelle (pas forcément l'ordre de la liste d'origine).
 
 ### Verdict global : aucune interférence avec l'existant
@@ -237,7 +239,7 @@ Le vraiment nouveau, c'est : la nuit séquentielle (point 1, la plus grosse piè
 - **Priorité : profondeur plutôt que largeur.** Chaque feature ci-dessous doit être finie, testée et committée avant de passer à la suivante, dans l'ordre 17.1 → 17.2 → 17.3 → 17.4. Si le travail autonome s'arrête avant la fin de la liste, il doit s'arrêter sur un point propre (une feature entièrement finie), jamais au milieu d'une feature à moitié câblée.
 - **Contraintes de l'environnement d'exécution autonome** : pas de Docker installé (impossible de lancer `docker compose up --build` soi-même — vérification via la suite de tests + `tsc` + `next build`, comme à chaque phase précédente ; l'utilisateur doit quand même faire un test Docker local avant de déployer). Pas d'identifiants `git push` (commits locaux uniquement, comme pour les Phases 2/3).
 
-### 17.1 Nuit séquentielle (point 1-6 du document) — le plus gros morceau, et la fondation
+### 17.1 Nuit séquentielle (point 1-6 du document) — le plus gros morceau, et la fondation — ✅ Fait
 
 **Comment ça s'articule avec l'existant** : `packages/game-engine` a déjà tout ce qu'il faut pour construire ça *par-dessus*, sans toucher aux rôles :
 - `ROLE_REGISTRY` + `nightPriority` définissent déjà un ordre total entre rôles.
@@ -254,11 +256,11 @@ Le vraiment nouveau, c'est : la nuit séquentielle (point 1, la plus grosse piè
 - **Dépendances d'ordre déjà existantes à préserver** : la Sorcière a besoin de connaître la cible des loups avant d'agir — déjà garanti aujourd'hui par `nightPriority`, doit rester garanti à l'identique dans le système séquentiel (résoudre l'étape des loups avant d'ouvrir celle de la Sorcière, pas juste envoyer les prompts dans l'ordre sans attendre la résolution).
 - **Salle des loups** (vote collectif, état `wolfRoom`) devient « l'étape Loups » avec son propre timer — compatible, juste un habillage différent d'un mécanisme qui existe déjà.
 
-### 17.2 Présentation de nuit (point 5-6) — dépend directement de 17.1
+### 17.2 Présentation de nuit (point 5-6) — dépend directement de 17.1 — ✅ Fait
 
 Couche purement présentation une fois 17.1 en place : transitions (« 🌙 La nuit tombe... », « 🛡️ Le Salvateur se réveille »), écran neutre (« Le village dort... ») pour les joueurs sans rien à faire cette étape-là. Déjà partiellement vrai aujourd'hui côté vie privée (un Villageois ne reçoit jamais le `NIGHT_PROMPT` d'un autre rôle) — ici on ajoute la mise en scène, pas la sécurité (déjà bonne).
 
-### 17.3 Spectateur + Afterlife (point 7-8) — indépendant de 17.1/17.2, peut être fait en parallèle
+### 17.3 Spectateur + Afterlife (point 7-8) — indépendant de 17.1/17.2, peut être fait en parallèle — ✅ Fait
 
 **Déjà vérifié** : `PlayerPublic`/`InternalPlayer` ont un champ `isSpectator: boolean` (`packages/shared`, `packages/game-engine`) — mais il est mis à `false` à la création du joueur et **n'est jamais réécrit ailleurs dans tout `game-engine`**. Un champ prévu mais jamais branché à ce jour, donc aucun risque de conflit : le réutiliser pour « joueur mort » (plutôt que d'en créer un distinct) est sûr et n'affecte aucun comportement existant, puisque rien ne le lit ni ne le modifie actuellement.
 Le blocage serveur des actions d'un mort existe déjà (`submitNightAction` rejette `!player.isAlive`) — ce qui manque, c'est la présentation (écran « Vous êtes mort → Mode spectateur ») et le chat privé lui-même. Le chat des morts (« Afterlife ») peut être construit exactement comme `WolfChat` existant (`relayWolfChatMessage`, salle dédiée, vérification côté serveur de l'éligibilité) — un pattern déjà en place et éprouvé, juste appliqué à « est mort » plutôt qu'« est loup ».
@@ -277,6 +279,23 @@ Le document propose : Nuit séquentielle → Présentation → Spectateur/Afterl
 4. **17.4 Performance Score v2 → Badges → Classements** (indépendant, peut être fait avant/en parallèle — commencer par le journal d'événements).
 
 **À confirmer avec l'utilisateur avant de commencer** : l'ordre ci-dessus convient-il, ou préfère-t-il un gain visible rapide (17.4) avant le plus gros chantier (17.1) ? (Question Loup Vert déjà tranchée — voir 17.1, Option A.)
+
+### Notes d'implémentation — session autonome du 8 août 2026 (17.1 → 17.3 livrés)
+
+Suite au feu vert de l'utilisateur (« admin toggle » pour le mode de nuit, « profondeur plutôt que largeur » comme priorité), 17.1, 17.2 et 17.3 ont été construits, testés et committés localement, un commit indépendant par étape (pour permettre un rollback ciblé) :
+
+- **17.1a** — types partagés (`nightMode`, `nightStepOrder`, `nightStepDurations`, `nightStepDisabled`, événement `NIGHT_STEP_STATE`). Commit `7a0a9f7`.
+- **17.1b/c** — `packages/game-engine/src/engine/NightSequencer.ts` (regroupe `getActiveNightRoles()` par `nightPriority` identique — c'est ce qui fusionne loups-garous/loup blanc/loup vert en une seule étape collective) + méthodes `GameEngine` (`isSequentialNightMode`, `getCurrentNightStepRoleIds`, `advanceNightStepIfComplete`, `forceAdvanceNightStep`) + 12 tests dédiés (`sequentialNight.test.ts`). Commit `6987f82`.
+- **17.1d** — `apps/server` : `sync()` avance les étapes automatiquement après chaque action ; `timers.ts` rend le timer de nuit sensible à l'étape courante (durée + expiration par rôle au lieu d'un timer de nuit unique) ; nouvelle diffusion `NIGHT_STEP_STATE` (`broadcast.ts`). Aucune config admin nouvelle côté socket : tout passe déjà par `ADMIN_UPDATE_CONFIG`/`ADMIN_CREATE_GAME` existants. 5 tests (`broadcast.test.ts`). Commit `8521a3c`.
+- **17.1e** — écran admin (`apps/web/src/app/admin/[code]/page.tsx`) : bascule simultanée/séquentielle, réordonnancement (▲▼), durée par rôle, activer/désactiver un rôle pour la partie. Bannière de progression côté joueur (`apps/web/src/app/play/[code]/page.tsx`) : « Étape N / total », compte à rebours par étape. Commit `917cb0f` (message corrigé en `e036e7c`).
+- **17.2** — narration « réveil » par rôle (🛡️ Le Salvateur se réveille…, 🐺 Les Loups se réveillent…) + « 🌙 La nuit tombe... » sur la toute première étape de la nuit. Purement présentation, aucun changement moteur/serveur. Commit `de7dbf9`.
+- **17.3a** — `isSpectator` (déjà présent dans `InternalPlayer`/`PlayerPublic` mais jamais branché — vérifié par grep avant modification) devient vrai à l'instant même où un joueur meurt (`DeathQueue.processDeaths`, le seul point de passage pour toute mort). Nouvelle méthode `GameEngine.getAfterlifeMemberIds()`. 5 tests (`afterlife.test.ts`). Commit `bb9fff4`.
+- **17.3b** — chat privé « Afterlife » côté serveur (`apps/server/src/socket/afterlife.ts`), calqué ligne à ligne sur `wolfRoom.ts` — seule différence réelle : pas limité à la nuit, reste actif à toutes les phases une fois quelqu'un mort. 6 tests (`afterlife.test.ts`). Commit `cd2725c`.
+- **17.3c** — composant web `AfterlifeChat` (calqué sur `WolfChat`), affiché en permanence (toutes phases) dès qu'un joueur est mort. Commit `ff4d8b7`.
+
+**Vérifications effectuées à chaque étape** : `tsc --noEmit` (shared + game-engine + server + web), `next build` (web), suite de tests complète du monorepo (**211/211 tests verts** à la fin de 17.3 — 0 régression sur les 130 tests pré-existants). Pas de `docker compose up --build` réel (sandbox sans Docker ni accès réseau pour générer le client Prisma) — l'utilisateur doit encore faire ce test avant tout déploiement, comme prévu dès le départ. Aucun push git (pas d'identifiants dans ce sandbox) — tout est committé localement sur `master`, prêt à être poussé et/ou testé en Docker par l'utilisateur.
+
+**Reste à faire pour clore le cahier de charge #2** : 17.4 (Performance Score v2 → Badges → Classements) — non commencé lors de cette session.
 
 ---
 
