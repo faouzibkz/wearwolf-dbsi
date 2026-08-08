@@ -30,6 +30,7 @@ import { gameRegistry } from "../gameRegistry.js";
 import { listPresets, savePreset, finalizeGameHistory } from "../db/persistence.js";
 import { applyRatingUpdates } from "../rating/applyRating.js";
 import { applyBaseProgression, applyMvpBonus } from "../progression/applyProgression.js";
+import { applyBadgesForUser, applyBadgesForMvpWinners } from "../badges/applyBadges.js";
 import { mvpVotingRegistry } from "../mvp/mvpVotingRegistry.js";
 import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
@@ -102,10 +103,18 @@ export function sync(io: Server, engine: import("@loupgarou/game-engine").GameEn
     // columns on the exact PlayerRecord rows finalizeGameHistory just
     // upserted, so those rows have to exist first. They run in parallel
     // with EACH OTHER, though: neither touches a column the other writes.
-    // gameRegistry's userId map is only cleared once all three are done.
+    // Badge evaluation (cahier de charge #2 §17.4c) runs last, after BOTH:
+    // it reads the PlayerRecord contribution columns finalizeGameHistory
+    // just wrote AND the User.level applyBaseProgression may just have
+    // bumped. gameRegistry's userId map is only cleared once everything is
+    // done.
     const getUserId = (playerId: string) => gameRegistry.getPlayerUserId(playerId);
     void finalizeGameHistory(engine, getUserId)
       .then(() => Promise.all([applyRatingUpdates(engine, getUserId), applyBaseProgression(engine, getUserId)]))
+      .then(() => {
+        const userIds = [...new Set(playerIds.map(getUserId).filter((id): id is string => Boolean(id)))];
+        return Promise.all(userIds.map((userId) => applyBadgesForUser(userId)));
+      })
       .then(() => gameRegistry.clearPlayerUserIds(playerIds));
   }
 }
@@ -138,8 +147,13 @@ function finalizeMvpVoting(io: Server, engine: import("@loupgarou/game-engine").
   const payload: MvpResultPayload = { winners };
   io.to(roomForGame(code)).emit(SOCKET_EVENTS.MVP_RESULT, payload);
   // Best-effort, same contract as every other post-game DB write — awards
-  // the MVP bonus XP/mvpCount, then frees this game's in-memory vote state.
-  void applyMvpBonus(code, result.winners).then(() => mvpVotingRegistry.clear(code));
+  // the MVP bonus XP/mvpCount, re-evaluates badges for whoever just crossed
+  // a mvpCount threshold (the "Populaire" badge — mvpCount is bumped here,
+  // well after GAME_ENDED, not by applyBaseProgression), then frees this
+  // game's in-memory vote state.
+  void applyMvpBonus(code, result.winners)
+    .then(() => applyBadgesForMvpWinners(code, result.winners))
+    .then(() => mvpVotingRegistry.clear(code));
 }
 
 /** Shared by ADMIN_FORCE_NEXT_PHASE and CHEF_FORCE_NEXT_PHASE — same effect, different permission check. */

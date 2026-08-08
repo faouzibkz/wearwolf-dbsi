@@ -53,6 +53,28 @@ model User {
   mvpCount Int @default(0)
 
   playerRecords PlayerRecord[]
+  // Cahier de charge #2 §17.4c (Badges).
+  badges        UserBadge[]
+}
+
+// Which badges a user has unlocked, and when — cahier de charge #2 §17.4c.
+// Deliberately just this: badge METADATA (name, description, secret flag,
+// unlock condition) lives in code, in
+// apps/server/src/badges/deriveBadges.ts's BADGE_REGISTRY, the same
+// "registry, not DB rows" pattern already proven for PERFORMANCE_SCORERS
+// and ROLE_REGISTRY (see FEATURES.md section 16) — adding a brand new
+// badge is one array entry + a redeploy, never a migration. `badgeId` is
+// therefore a free-form string, not a foreign key to a badge table that
+// doesn't exist.
+model UserBadge {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  badgeId    String
+  unlockedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+  @@index([userId])
 }
 
 // Runtime-tunable per-role difficulty coefficients (section 7). Seeded from
@@ -133,6 +155,29 @@ model PlayerRecord {
   xpEarned     Int     @default(0)
   isMvp        Boolean @default(false)
   joinedAt     DateTime @default(now())
+
+  // Cahier de charge #2 §17.4c — this ONE game's contribution to this
+  // player's career badge totals, computed once at finalizeGameHistory()
+  // time from GameEngine.getPlayerEvents()/getEventLog() (see
+  // apps/server/src/badges/deriveBadgeContribution.ts, a pure function unit
+  // tested without a database). apps/server/src/badges/applyBadges.ts SUMs
+  // these across a user's whole PlayerRecord history to evaluate the
+  // role-mastery badges — a per-game fact, cheap to SUM(), same reasoning
+  // as ratingDelta/xpEarned above never needing the full engine state
+  // replayed to answer "how well has this account done overall".
+  voyanteWolvesFound           Int     @default(0)
+  salvateurSuccessfulProtects  Int     @default(0)
+  sorciereWolvesKilledByPoison Int     @default(0)
+  chasseurWolvesKilledByShot   Int     @default(0)
+  alienCorrectGuesses          Int     @default(0)
+  loupVertSuccessfulSteals     Int     @default(0)
+  corbeauSuccessfulMarks       Int     @default(0)
+  barbieWolvesRevealed         Int     @default(0)
+  barbieMisfires               Int     @default(0)
+  mowgliTransformed            Boolean @default(false)
+  // True only for the sole surviving member of the WINNING team this game —
+  // see deriveBadgeContribution.ts's wasSoleSurvivor().
+  wasSoleSurvivor              Boolean @default(false)
 
   // Nullable: a handful of legacy PlayerRecord rows (written before accounts
   // existed) or a guest who somehow bypassed the join-gate can have no

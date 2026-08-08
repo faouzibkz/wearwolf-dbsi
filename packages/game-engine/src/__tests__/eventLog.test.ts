@@ -415,6 +415,34 @@ describe("Structured event journal (GameEvent / eventLog)", () => {
     expect(engine.getPublicState().players.find((p) => p.id === ids[villager]!)!.isAlive).toBe(false);
   });
 
+  it("records a Mowgli transformation when his chosen father dies", () => {
+    const names = ["A", "B", "C", "D", "E"];
+    const engine = GameEngine.createGame({ roleCounts: { LOUP_GAROU: 1, MOWGLI: 1 } }, seededRng(30));
+    const ids: Record<string, string> = {};
+    for (const n of names) ids[n] = engine.addPlayer(n).id;
+    engine.startGame();
+    engine.volunteerForChef(ids.A!);
+    engine.forceStartChefDebate();
+    engine.advanceChefSpeaker();
+    for (const n of ["B", "C", "D", "E"]) engine.castChefVote(ids[n]!, ids.A!);
+    engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
+    engine.endDay1Discussion();
+
+    const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
+    const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
+    const mowgli = names.find((n) => roles.get(ids[n]!) === "MOWGLI")!;
+    const father = names.find((n) => n !== wolf && n !== mowgli)!;
+
+    engine.submitNightAction(ids[mowgli]!, "CHOOSE_FATHER", ids[father]!);
+    engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[father]!);
+    engine.resolveNightAndProceed();
+
+    expect(eventsOfType(engine, "MOWGLI_TRANSFORM")).toEqual([
+      { type: "MOWGLI_TRANSFORM", night: 1, actorId: ids[mowgli]!, fatherId: ids[father]! },
+    ]);
+  });
+
   it("serialize()/deserialize() round-trips the event log", () => {
     const names = ["A", "B", "C", "D", "E", "F"];
     const { engine, ids, roles } = bootToNight1(names, { LOUP_GAROU: 1, VOYANTE: 1 }, 24);

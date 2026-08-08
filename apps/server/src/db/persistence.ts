@@ -7,6 +7,7 @@ import {
   computeWinStreaks,
   type GameResult,
 } from "../stats/deriveStats.js";
+import { deriveBadgeContribution, wasSoleSurvivor } from "../badges/deriveBadgeContribution.js";
 
 /**
  * Best-effort snapshot persistence. Every mutating socket handler calls
@@ -79,10 +80,16 @@ export async function finalizeGameHistory(
 
     const winner = engine.getPublicState().winner;
     const summaries = engine.getFinalPlayerSummaries();
+    // Cahier de charge #2 §17.4c — read once, shared by every player below
+    // (a Corbeau's mark can only be checked against the full log, not that
+    // player's own events alone — see deriveBadgeContribution.ts).
+    const fullEventLog = engine.getEventLog();
 
     await Promise.all(
       summaries.map((s) => {
         const result = winner === null ? "DRAW" : s.team === winner ? "WON" : "LOST";
+        const contribution = deriveBadgeContribution(engine.getPlayerEvents(s.playerId), fullEventLog);
+        const soleSurvivor = wasSoleSurvivor(s, summaries, winner);
         return prisma.playerRecord.upsert({
           where: { gameId_enginePlayerId: { gameId: game.id, enginePlayerId: s.playerId } },
           create: {
@@ -96,6 +103,8 @@ export async function finalizeGameHistory(
             team: s.team,
             result,
             userId: userIdForPlayer(s.playerId) ?? null,
+            ...contribution,
+            wasSoleSurvivor: soleSurvivor,
           },
           update: {
             nickname: s.nickname,
@@ -106,6 +115,8 @@ export async function finalizeGameHistory(
             team: s.team,
             result,
             userId: userIdForPlayer(s.playerId) ?? null,
+            ...contribution,
+            wasSoleSurvivor: soleSurvivor,
           },
         });
       }),

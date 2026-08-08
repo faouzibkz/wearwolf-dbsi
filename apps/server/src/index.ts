@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { registerSocketHandlers } from "./socket/handlers.js";
 import { authRouter } from "./http/authRoutes.js";
 import { accountApiRouter } from "./http/accountRoutes.js";
+import { badgeApiRouter } from "./http/badgeRoutes.js";
 import { seedMissingRoleDifficulties } from "./rating/applyRating.js";
 
 /**
@@ -41,6 +42,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api", accountApiRouter);
+app.use("/api", badgeApiRouter);
 
 /**
  * Global HTTP error-handling middleware — must be registered last. Catches

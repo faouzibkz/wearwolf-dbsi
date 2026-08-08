@@ -131,6 +131,19 @@ export type GameEvent =
       day: number;
       round: number;
       targetId: string;
+    }
+  | {
+      /** Recorded in DeathQueue.processDeaths, at the exact point Mowgli's
+       * roleId flips to LOUP_GAROU (his "father"'s death) — see
+       * InternalPlayer.mowgliFatherId/mowgliTransformed. `actorId` is
+       * Mowgli himself: by the time this fires his own roleId has already
+       * changed, so this is the only durable record that he STARTED the
+       * game as Mowgli at all (cahier de charge #2 §17.4c's "Ami
+       * Imaginaire" secret badge needs exactly this). */
+      type: "MOWGLI_TRANSFORM";
+      night: number | null;
+      actorId: string;
+      fatherId: string;
     };
 
 export type GameEventType = GameEvent["type"];

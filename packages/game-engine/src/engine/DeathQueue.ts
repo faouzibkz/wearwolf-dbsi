@@ -88,6 +88,12 @@ export function processDeaths(ctx: EngineContext, deaths: DeathRequest[]): strin
         candidate.mowgliTransformed = true;
         ctx.state.pendingMowgliReveal = true;
         ctx.log("Mowgli est devenu un Loup-garou (identité non révélée dans les logs publics).");
+        ctx.recordEvent({
+          type: "MOWGLI_TRANSFORM",
+          night: ctx.state.phase === "NIGHT" ? ctx.state.nightNumber : null,
+          actorId: candidate.id,
+          fatherId: player.id,
+        });
       }
     }
   }
