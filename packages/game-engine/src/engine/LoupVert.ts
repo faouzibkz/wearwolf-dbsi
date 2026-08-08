@@ -71,6 +71,15 @@ export function submitGuess(
   loupVert.loupVertLastGuessNight = nightNumber;
   const correct = target.roleId === guessedRoleId;
 
+  ctx.recordEvent({
+    type: "LOUP_VERT_GUESS",
+    night: nightNumber,
+    actorId: loupVertId,
+    targetId,
+    guessedRoleId,
+    correct,
+  });
+
   if (!correct) {
     ctx.log(`${loupVert.nickname} (Loup vert) a deviné un rôle, à tort.`);
     return { correct: false, permanent: false, grantedPowerRoleId: null };

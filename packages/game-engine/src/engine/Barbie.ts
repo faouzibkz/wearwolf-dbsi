@@ -71,6 +71,13 @@ export function usePower(ctx: EngineContext, barbieId: string, targetId: string)
     deadIds = [targetId];
     newChefId = barbieId;
     outcomeType = "WOLF_DIED_BARBIE_CHEF";
+    ctx.recordEvent({
+      type: "BARBIE_REVEAL",
+      actorId: barbieId,
+      targetId,
+      targetRoleId,
+      outcome: outcomeType,
+    });
     applyRevealToDiscussionQueue(ctx, deadIds, oldChefId, newChefId);
   } else {
     processDeaths(ctx, [
@@ -80,6 +87,13 @@ export function usePower(ctx: EngineContext, barbieId: string, targetId: string)
     ctx.log(`${barbie.nickname} (Barbie) démasque ${targetNickname} — pas un loup — et meurt avec elle/lui.`);
     deadIds = [targetId, barbieId];
     outcomeType = "BOTH_DIED";
+    ctx.recordEvent({
+      type: "BARBIE_REVEAL",
+      actorId: barbieId,
+      targetId,
+      targetRoleId,
+      outcome: outcomeType,
+    });
     applyRevealToDiscussionQueue(ctx, deadIds, null, null);
   }
 

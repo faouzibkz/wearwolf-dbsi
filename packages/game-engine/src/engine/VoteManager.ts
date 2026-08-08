@@ -73,6 +73,13 @@ export function castDayVote(ctx: EngineContext, voterId: string, targetId: strin
       : ctx.state.dayVote.tiedIds;
   if (!eligibleIds.includes(target.id)) throw new Error("Cible de vote invalide.");
   ctx.state.dayVote.votes.set(voterId, targetId);
+  ctx.recordEvent({
+    type: "DAY_VOTE_CAST",
+    day: ctx.state.dayNumber,
+    round: ctx.state.dayVote.round,
+    actorId: voterId,
+    targetId,
+  });
 }
 
 /**
@@ -108,6 +115,12 @@ export function tallyDayVote(
   if (topIds.length === 1) {
     const eliminatedId = topIds[0]!;
     processDeaths(ctx, [{ playerId: eliminatedId, cause: "VOTE_ELIMINATION" }]);
+    ctx.recordEvent({
+      type: "DAY_VOTE_ELIMINATION",
+      day: ctx.state.dayNumber,
+      round: dayVote.round,
+      targetId: eliminatedId,
+    });
     resetDayVote(ctx);
     ctx.state.corbeauMarkedPlayerId = null;
     return {
@@ -174,6 +187,12 @@ function resolveRepeatedTie(
     case "RANDOM": {
       const chosen = shuffle(topIds, rng)[0]!;
       processDeaths(ctx, [{ playerId: chosen, cause: "VOTE_ELIMINATION" }]);
+      ctx.recordEvent({
+        type: "DAY_VOTE_ELIMINATION",
+        day: ctx.state.dayNumber,
+        round: dayVote.round,
+        targetId: chosen,
+      });
       resetDayVote(ctx);
       ctx.state.corbeauMarkedPlayerId = null;
       ctx.log("Égalité persistante — élimination tirée au sort.");
@@ -215,6 +234,12 @@ export function resolveTieManually(ctx: EngineContext, targetId: string | null):
       throw new Error("La cible doit faire partie des joueurs à égalité.");
     }
     processDeaths(ctx, [{ playerId: targetId, cause: "VOTE_ELIMINATION" }]);
+    ctx.recordEvent({
+      type: "DAY_VOTE_ELIMINATION",
+      day: ctx.state.dayNumber,
+      round: ctx.state.dayVote.round,
+      targetId,
+    });
   }
   const tiedIds = ctx.state.dayVote.tiedIds;
   resetDayVote(ctx);

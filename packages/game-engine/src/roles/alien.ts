@@ -76,6 +76,16 @@ export const alienRole: RoleModule = {
     const guessedWolf = isWolfRole(guessedRoleId);
     const correct = target.roleId === guessedRoleId;
 
+    const night = ctx.state.nightScratch?.nightNumber ?? ctx.state.nightNumber;
+    ctx.recordEvent({
+      type: "ALIEN_GUESS",
+      night,
+      actorId: actor.id,
+      targetId: target.id,
+      guessedRoleId,
+      correct,
+    });
+
     if (correct) {
       actor.alienLastGuessResult = "CORRECT";
       processDeaths(ctx, [{ playerId: target.id, cause: "ALIEN_GUESS_CORRECT" }]);

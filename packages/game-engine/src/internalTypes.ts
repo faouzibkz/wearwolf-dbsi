@@ -1,4 +1,5 @@
 import type { GameConfig, LogEntry, Phase, RoleId, Team, TieResolutionRule } from "@loupgarou/shared";
+import type { GameEvent } from "./events";
 
 /**
  * The FULL, authoritative player record. This never leaves the server
@@ -224,6 +225,15 @@ export interface GameInternalState {
   /** One-shot latch for GameEngine.consumeGameEndedNotification() — see that method's doc comment. */
   gameEndedNotified: boolean;
   createdAt: number;
+  /**
+   * Structured, append-only history of "who did what, with what outcome" —
+   * see events.ts's GameEvent for the full union and why each variant is
+   * recorded where it is. Never rewritten, only pushed to (via
+   * EngineContext.recordEvent), and — being a plain array of plain objects —
+   * needs no special handling in GameEngine.serialize()/deserialize(),
+   * unlike the Map-backed fields above.
+   */
+  eventLog: GameEvent[];
 }
 
 export interface EngineContext {
@@ -233,4 +243,6 @@ export interface EngineContext {
   getAliveByRole(roleId: RoleId): InternalPlayer[];
   log(message: string): void;
   queueDeath(playerId: string, cause: string): void;
+  /** Appends one structured event to GameInternalState.eventLog — see events.ts. */
+  recordEvent(event: GameEvent): void;
 }

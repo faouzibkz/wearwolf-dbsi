@@ -12,4 +12,5 @@ export type {
 } from "./internalTypes";
 export type { RoleModule, NightActionRequest } from "./roles/Role";
 export { ROLE_REGISTRY, getRolesByNightPriority } from "./roles/registry";
+export type { GameEvent, GameEventType } from "./events";
 export * from "@loupgarou/shared";

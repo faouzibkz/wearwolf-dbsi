@@ -13,6 +13,7 @@ import type {
 } from "@loupgarou/shared";
 import { CHEF_TITLE, DEFAULT_GAME_CONFIG, ROLE_IDS, ROLE_METADATA } from "@loupgarou/shared";
 import type { EngineContext, GameInternalState, InternalPlayer, NightScratch } from "../internalTypes";
+import type { GameEvent } from "../events";
 import { generateGameCode, generatePlayerId, generateReconnectToken } from "../util/ids";
 import { shuffle } from "../util/shuffle";
 import { ROLE_REGISTRY } from "../roles/registry";
@@ -85,6 +86,7 @@ export class GameEngine {
       rolesRevealedToPlayers: false,
       gameEndedNotified: false,
       createdAt: Date.now(),
+      eventLog: [],
     };
     return new GameEngine(state, rng);
   }
@@ -113,6 +115,9 @@ export class GameEngine {
       },
       queueDeath(playerId: string, cause: string) {
         processDeaths(self.ctx(), [{ playerId, cause }]);
+      },
+      recordEvent(event: GameEvent) {
+        self.state.eventLog.push(event);
       },
     };
   }
@@ -805,6 +810,7 @@ export class GameEngine {
     if (index === -1) throw new Error("Ce joueur n'a pas de tir en attente.");
     this.state.pendingChasseurShooterIds.splice(index, 1);
     processDeaths(this.ctx(), [{ playerId: targetId, cause: "CHASSEUR_SHOT" }]);
+    this.ctx().recordEvent({ type: "CHASSEUR_SHOT", actorId: shooterId, targetId });
 
     // Chasseur shots can happen after a night OR after a day-vote elimination.
     this.tryResumeAfterBlockers();
@@ -1392,6 +1398,22 @@ export class GameEngine {
     });
   }
 
+  /**
+   * The full structured history for the game so far (or the whole game,
+   * once ended) — see events.ts's GameEvent for the union and
+   * FEATURES.md §17.4a for why this exists (Performance Score v2, Badges,
+   * Leaderboards all read this generically instead of re-deriving
+   * "who did what" from scratch).
+   */
+  getEventLog(): GameEvent[] {
+    return this.state.eventLog;
+  }
+
+  /** Every event this specific player caused (see GameEvent's `actorId` doc comment). */
+  getPlayerEvents(playerId: string): GameEvent[] {
+    return this.state.eventLog.filter((e) => "actorId" in e && e.actorId === playerId);
+  }
+
   getPhase(): Phase {
     return this.state.phase;
   }
@@ -1430,6 +1452,9 @@ export class GameEngine {
       players: new Map(data.players),
       chef: { ...data.chef, votes: new Map(data.chef.votes) },
       dayVote: { ...data.dayVote, votes: new Map(data.dayVote.votes) },
+      // Backward-compatible with games persisted before this field existed
+      // (see FEATURES.md §17.4a) — an old save simply has no history yet.
+      eventLog: data.eventLog ?? [],
     };
     return new GameEngine(state, rng);
   }
