@@ -1,5 +1,5 @@
 import http from "node:http";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { Server } from "socket.io";
 import { DEFAULT_ROLE_DIFFICULTY } from "@loupgarou/rating";
@@ -8,6 +8,25 @@ import { registerSocketHandlers } from "./socket/handlers.js";
 import { authRouter } from "./http/authRoutes.js";
 import { accountApiRouter } from "./http/accountRoutes.js";
 import { seedMissingRoleDifficulties } from "./rating/applyRating.js";
+
+/**
+ * Last-resort safety net for anything that reaches neither a route's own
+ * try/catch nor the global Express error middleware below (e.g. an error
+ * thrown outside a request, in a timer or a fire-and-forget promise like
+ * finalizeGameHistory's callers in socket/handlers.ts). Node's default
+ * behavior for both of these is to crash the process — logging instead
+ * keeps every OTHER game in progress alive. This isn't a substitute for
+ * fixing the underlying bug (still checked in CI/CloudWatch), it's just
+ * the difference between "one thing broke" and "everyone's game just
+ * disappeared" — see the 2026-08-08 incident (GET /me + a missing Prisma
+ * migration crashed the whole server) this was added in response to.
+ */
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandled promise rejection", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[process] uncaught exception", err);
+});
 
 const app = express();
 // credentials: true is required for the session cookie to ride along on
@@ -22,6 +41,25 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api", accountApiRouter);
+
+/**
+ * Global HTTP error-handling middleware — must be registered last. Catches
+ * whatever asyncHandler.ts forwards via next(err), plus anything a future
+ * route lets slip through. Without this (and without asyncHandler on every
+ * async route), an unexpected error — a DB hiccup, a missing migration, a
+ * bug — becomes an unhandled rejection and takes down the ENTIRE process,
+ * disconnecting every game in progress, not just the one request that
+ * failed. That's exactly what happened on 2026-08-08 (GET /me + a missing
+ * Prisma migration). One player's bad day should never end everyone else's
+ * game.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("[http] unhandled route error", err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Erreur serveur, réessayez." });
+  }
+});
 
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {

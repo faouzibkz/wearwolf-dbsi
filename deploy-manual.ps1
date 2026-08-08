@@ -24,6 +24,42 @@ $Sha = (git rev-parse --short HEAD 2>$null)
 if (-not $Sha) { $Sha = "manual-$(Get-Date -Format 'yyyyMMdd-HHmmss')" }
 Write-Host "Deploying build tag: $Sha" -ForegroundColor Cyan
 
+# --- Pending-migration guard -------------------------------------------
+# On 2026-08-08, a schema.prisma change (Phase 3: XP/level/MVP columns)
+# shipped without its "npx prisma db push" ever being run against
+# production -- the new server code immediately crashed the ENTIRE
+# process on the first /login (Prisma P2022, missing column), and ECS
+# just kept restarting into the same wall. This compares schema.prisma
+# against the last commit this script successfully deployed (tracked in
+# .deploy-marker, gitignored/local-only) and refuses to proceed silently
+# if it changed -- ECS Exec can't be scripted headlessly (it's an
+# interactive SSM session, no non-interactive "run one command" mode), so
+# this is a hard stop + exact copy-paste commands, not full automation.
+$MarkerFile = Join-Path $PSScriptRoot ".deploy-marker"
+$LastDeployedSha = if (Test-Path $MarkerFile) { (Get-Content $MarkerFile -Raw).Trim() } else { $null }
+$SchemaChanged = $false
+if ($LastDeployedSha) {
+    $changedFiles = git diff --name-only $LastDeployedSha $Sha -- apps/server/prisma/schema.prisma 2>$null
+    if ($changedFiles) { $SchemaChanged = $true }
+} else {
+    Write-Host "`n(No .deploy-marker found -- can't tell if schema.prisma changed since the last deploy. Treating this as a schema change to be safe.)" -ForegroundColor Yellow
+    $SchemaChanged = $true
+}
+
+if ($SchemaChanged) {
+    Write-Host "`n========================================================================" -ForegroundColor Red
+    Write-Host " SCHEMA CHANGE DETECTED (apps/server/prisma/schema.prisma)" -ForegroundColor Red
+    Write-Host " The new server image will crash on ITS FIRST DB QUERY until you run" -ForegroundColor Red
+    Write-Host " the migration against production. You MUST do this right after this" -ForegroundColor Red
+    Write-Host " script finishes deploying (exact commands will be printed again then):" -ForegroundColor Red
+    Write-Host "`n   aws ecs list-tasks --cluster $Cluster --service-name $ServerService --desired-status RUNNING" -ForegroundColor White
+    Write-Host "   aws ecs execute-command --cluster $Cluster --task <task-arn-from-above> --container server --interactive --command `"/bin/sh`"" -ForegroundColor White
+    Write-Host "   cd /app/apps/server && npx prisma db push" -ForegroundColor White
+    Write-Host "========================================================================`n" -ForegroundColor Red
+    $confirm = Read-Host "Type 'yes' to acknowledge and continue"
+    if ($confirm -ne "yes") { throw "Deploy aborted -- run the migration first, or re-run and type 'yes'." }
+}
+
 Write-Host "`n== Logging in to ECR ==" -ForegroundColor Cyan
 # Piping through PowerShell's own pipeline can mangle the token (extra
 # CR/LF, encoding changes) and Docker rejects it with a 400 rather than a
@@ -72,3 +108,14 @@ Deploy-Service -taskDefFamily $ServerRepo -image "$Registry/$ServerRepo`:$Sha" -
 Write-Host "`n== Waiting for both services to stabilize (this can take a couple minutes) ==" -ForegroundColor Cyan
 aws ecs wait services-stable --cluster $Cluster --services $WebService $ServerService
 Write-Host "`nDone. Both services deployed at commit $Sha and should be live at $SiteUrl" -ForegroundColor Green
+
+Set-Content -Path $MarkerFile -Value $Sha -NoNewline
+
+if ($SchemaChanged) {
+    Write-Host "`n========================================================================" -ForegroundColor Yellow
+    Write-Host " REMINDER: run the pending migration now, before anyone tries to log in:" -ForegroundColor Yellow
+    Write-Host "`n   aws ecs list-tasks --cluster $Cluster --service-name $ServerService --desired-status RUNNING" -ForegroundColor White
+    Write-Host "   aws ecs execute-command --cluster $Cluster --task <task-arn-from-above> --container server --interactive --command `"/bin/sh`"" -ForegroundColor White
+    Write-Host "   cd /app/apps/server && npx prisma db push" -ForegroundColor White
+    Write-Host "========================================================================`n" -ForegroundColor Yellow
+}

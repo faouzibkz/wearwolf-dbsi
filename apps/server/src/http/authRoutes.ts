@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma.js";
 import { hashPassword, verifyPassword } from "../auth/passwords.js";
 import { signSessionToken } from "../auth/jwt.js";
 import { clearSessionCookie, readSessionFromRequest, setSessionCookie } from "../auth/cookies.js";
+import { asyncHandler } from "./asyncHandler.js";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
@@ -95,18 +96,21 @@ authRouter.post("/logout", (_req, res) => {
   res.status(204).end();
 });
 
-authRouter.get("/me", async (req, res) => {
-  const session = readSessionFromRequest(req);
-  if (!session) {
-    res.status(401).json({ error: "Non connecté." });
-    return;
-  }
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
-  if (!user) {
-    // Account was deleted since the cookie was issued.
-    clearSessionCookie(res);
-    res.status(401).json({ error: "Non connecté." });
-    return;
-  }
-  res.json({ user: publicUser(user) });
-});
+authRouter.get(
+  "/me",
+  asyncHandler(async (req, res) => {
+    const session = readSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: "Non connecté." });
+      return;
+    }
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    if (!user) {
+      // Account was deleted since the cookie was issued.
+      clearSessionCookie(res);
+      res.status(401).json({ error: "Non connecté." });
+      return;
+    }
+    res.json({ user: publicUser(user) });
+  }),
+);
