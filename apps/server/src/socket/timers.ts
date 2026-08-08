@@ -123,8 +123,13 @@ function schedulePendingBlockerTimer(io: Server, engine: GameEngine): void {
   const timeout = setTimeout(() => {
     try {
       engine.resolvePendingBlockersIfAny();
-      pushAllPrompts(io, engine);
+      // See the matching comment in schedulePhaseTimer's own setTimeout
+      // below for why this order (schedule THEN push, never the reverse)
+      // matters: pushAllPrompts must never broadcast before
+      // schedulePhaseTimer has had a chance to set a fresh phaseEndsAt for
+      // whatever comes next.
       schedulePhaseTimer(io, engine);
+      pushAllPrompts(io, engine);
     } catch (err) {
       console.error("[timer] pending-blocker auto-resolve failed", err);
       // Do NOT let a failed auto-resolve permanently kill this game's timer
@@ -133,8 +138,8 @@ function schedulePendingBlockerTimer(io: Server, engine: GameEngine): void {
       // tick gets a chance to recover instead of the game silently hanging
       // forever with a countdown that reaches zero and does nothing.
       try {
-        pushAllPrompts(io, engine);
         schedulePhaseTimer(io, engine);
+        pushAllPrompts(io, engine);
       } catch (err2) {
         console.error("[timer] pending-blocker recovery reschedule also failed", err2);
       }
@@ -242,8 +247,22 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
       } else {
         forceNextPhase(engine);
       }
-      pushAllPrompts(io, engine);
+      // schedulePhaseTimer MUST run before pushAllPrompts, not after: it's
+      // the only thing that ever calls engine.setPhaseTimer() to compute a
+      // FRESH phaseEndsAt for the phase/speaker/step we just transitioned
+      // into above. Every broadcast pushAllPrompts sends
+      // (GAME_STATE.phaseEndsAt, NIGHT_PROMPT/NIGHT_STEP_STATE's
+      // deadlineAt) reads engine.getPhaseEndsAt() at the instant it's
+      // called — get this order backwards and every client briefly
+      // receives the PREVIOUS phase's already-expired deadline (rendering
+      // "0:00", or a countdown that doesn't reset to the new phase's full
+      // duration) until some unrelated LATER action happens to trigger
+      // another broadcast that finally carries the corrected value. This
+      // was a real, longstanding bug hitting every auto-advance — day
+      // discussion, day vote, chef debate, night actions, all of them —
+      // not something specific to any one phase.
       schedulePhaseTimer(io, engine);
+      pushAllPrompts(io, engine);
     } catch (err) {
       // CRITICAL: this catch existed before but only ever logged and gave
       // up — it did NOT reschedule anything. Every auto-advance (including
@@ -261,8 +280,8 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
       // forever.
       console.error("[timer] auto-advance failed", err);
       try {
-        pushAllPrompts(io, engine);
         schedulePhaseTimer(io, engine);
+        pushAllPrompts(io, engine);
       } catch (err2) {
         console.error("[timer] auto-advance recovery reschedule also failed", err2);
       }

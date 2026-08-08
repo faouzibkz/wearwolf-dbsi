@@ -47,8 +47,13 @@ import { pushAllPrompts } from "./sync.js";
  * manual admin/Chef skip, a timer auto-advancing a phase, or a player's own
  * vote completing the day-vote queue — instead of needing every individual
  * call site that could possibly end the game to remember to check.
+ *
+ * Exported (only) so timerOrdering.test.ts can exercise the REAL production
+ * sequence end-to-end — this function's own internal ordering (schedule
+ * timer before broadcasting) was a real, previously-shipped bug; see the
+ * comment on the schedulePhaseTimer/pushAllPrompts lines below.
  */
-function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
+export function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
   // Cahier de charge #2 §17.1 — SEQUENTIAL night mode only (a no-op call
   // outside NIGHT/SEQUENTIAL, see GameEngine.isSequentialNightMode()):
   // every mutation funnels through this one sync(), so this is the single
@@ -57,8 +62,19 @@ function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): 
   // remember to call it itself. May itself resolve the night and transition
   // to MORNING if this was the last outstanding step.
   if (engine.isSequentialNightMode()) engine.advanceNightStepIfComplete();
-  pushAllPrompts(io, engine);
+  // schedulePhaseTimer MUST run before pushAllPrompts, not after: it's the
+  // only thing that ever calls engine.setPhaseTimer() to compute a FRESH
+  // phaseEndsAt for whatever phase/speaker/step we're on right NOW. Every
+  // broadcast pushAllPrompts sends (GAME_STATE.phaseEndsAt, NIGHT_PROMPT/
+  // NIGHT_STEP_STATE's deadlineAt) reads engine.getPhaseEndsAt() at the
+  // instant it's called — call it first and every client briefly receives
+  // the PREVIOUS phase's already-expired deadline (rendering "0:00" or a
+  // countdown that doesn't reset) until some unrelated later action
+  // happens to trigger a fresh broadcast. This was a real, longstanding
+  // bug affecting every transition (day discussion, day vote, night
+  // actions, chef debate, etc.), not something specific to any one phase.
   schedulePhaseTimer(io, engine);
+  pushAllPrompts(io, engine);
   if (engine.consumeGameEndedNotification()) {
     io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
       stats: engine.getEndGameStats(),
