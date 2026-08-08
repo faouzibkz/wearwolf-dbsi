@@ -41,6 +41,45 @@ import { LiveVoteList } from "@/components/LiveVoteList";
 import { WolfChat } from "@/components/WolfChat";
 import { EndGamePanel } from "@/components/EndGamePanel";
 
+/**
+ * Cahier de charge #2 §17.2 — Night presentation. Per-role "wake up" flavor
+ * text for the SEQUENTIAL night step banner, replacing a generic
+ * "{displayName} agit…" with the same kind of narration the cahier de
+ * charge's own examples used ("🛡️ Le Salvateur se réveille"). Purely
+ * cosmetic — every role's actual eligibility/prompt logic is untouched;
+ * this is only ever read from the step banner in the "NIGHT" case below.
+ * The wolf pack (LOUP_GAROU + LOUP_BLANC + LOUP_VERT) always shares one
+ * merged step when more than one of them is in play (see NightSequencer.ts
+ * server-side), hence the dedicated multi-role phrasing rather than a
+ * per-role lookup for that case.
+ */
+const NIGHT_WAKE_TEXT: Partial<Record<RoleId, string>> = {
+  MOWGLI: "🌿 Mowgli se réveille…",
+  SALVATEUR: "🛡️ Le Salvateur se réveille…",
+  ALIEN: "👽 L'Alien se réveille…",
+  VOYANTE: "🔮 La Voyante se réveille…",
+  LOUP_GAROU: "🐺 Les Loups-garous se réveillent…",
+  LOUP_BLANC: "🐺 Le Loup blanc se réveille…",
+  LOUP_VERT: "🐺 Le Loup vert se réveille…",
+  SORCIERE: "🧙‍♀️ La Sorcière se réveille…",
+  CORBEAU: "🐦‍⬛ Le Corbeau se réveille…",
+};
+
+const WOLF_TEAM_ROLE_IDS: RoleId[] = ["LOUP_GAROU", "LOUP_BLANC", "LOUP_VERT"];
+
+function describeNightStep(roleIds: RoleId[]): string {
+  if (roleIds.length > 1 && roleIds.every((id) => WOLF_TEAM_ROLE_IDS.includes(id))) {
+    return "🐺 Les Loups se réveillent…";
+  }
+  if (roleIds.length === 1) {
+    return NIGHT_WAKE_TEXT[roleIds[0]!] ?? `${ROLE_METADATA[roleIds[0]!].displayName} agit…`;
+  }
+  // Defensive fallback — not expected today (every current multi-role step
+  // is the wolf pack, handled above), but never worth crashing the UI over
+  // a future role sharing a step in some new way.
+  return `${roleIds.map((id) => ROLE_METADATA[id].displayName).join(" & ")} agissent…`;
+}
+
 export default function PlayPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
@@ -711,18 +750,21 @@ function PhaseView({
                 original "Le village dort…" behavior is completely
                 unchanged for every SIMULTANEOUS game. */}
             {nightStepState?.currentStepRoleIds ? (
-              <div className="space-y-2 animate-fade-in">
+              // key={stepIndex} re-triggers animate-fade-in on every step
+              // change, not just once — the "🌙 La nuit tombe..." /
+              // "🛡️ Le Salvateur se réveille" mise en scène from cahier de
+              // charge #2 §17.2. Purely presentation: no server request is
+              // made here, this just reacts to the NIGHT_STEP_STATE this
+              // component already listens for.
+              <div key={nightStepState.stepIndex} className="space-y-2 animate-fade-in">
+                {nightStepState.stepIndex === 1 && (
+                  <p className="text-sm text-night-100/50 italic">🌙 La nuit tombe sur le village…</p>
+                )}
                 <p className="text-xs text-night-600 uppercase tracking-wide">
                   Étape {nightStepState.stepIndex} / {nightStepState.totalSteps}
                 </p>
                 <p className="text-sm text-night-100/70">
-                  {prompt
-                    ? "C'est votre tour…"
-                    : `${nightStepState.currentStepRoleIds
-                        .map((id) => ROLE_METADATA[id].displayName)
-                        .join(" & ")} ${
-                        nightStepState.currentStepRoleIds.length > 1 ? "agissent" : "agit"
-                      }…`}
+                  {prompt ? "C'est votre tour…" : describeNightStep(nightStepState.currentStepRoleIds)}
                 </p>
                 <div className="flex justify-center">
                   <CountdownTimer endsAt={nightStepState.stepDeadlineAt} />
