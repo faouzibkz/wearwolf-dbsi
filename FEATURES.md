@@ -2,22 +2,20 @@
 
 > Ce document suit, section par section, le cahier de charge fourni le 6 août 2026. Il est mis à jour à chaque phase livrée — c'est la source de vérité sur ce qui est fait, en cours, ou pas commencé. Voir **[ARCHITECTURE.md](./ARCHITECTURE.md)** pour le détail technique de ce qui est listé ✅ ici.
 >
-> **Décision de scope** : le cahier de charge a été volontairement découpé en phases plutôt que livré en un bloc (accord explicite avec l'utilisateur). **Phases 1 et 2 (2a + 2b) sont terminées et déployées en production** (`https://loupgarou-dbsi.com`, vérifié en jeu réel le 8 août 2026). **Phase 3 (XP/niveau + MVP) est terminée, testée, et committée sur `master` — mais pas encore déployée** (voir "Ce qu'il reste à faire avant déploiement" ci-dessous).
+> **Décision de scope** : le cahier de charge a été volontairement découpé en phases plutôt que livré en un bloc (accord explicite avec l'utilisateur). **Phases 1, 2 (2a + 2b) et 3 sont terminées et déployées en production** (`https://loupgarou-dbsi.com`, vérifié en jeu réel le 8 août 2026). Un **deuxième cahier de charge**, purement additif (expérience de jeu + progression sociale, sans toucher aux règles des rôles), a été reçu le 8 août 2026 — voir **section 17** pour le détail et le plan.
 
 Légende : ✅ Fait · 🚧 Partiel · ⬜ À faire
 
 ---
 
-## ⚠️ Ce qu'il reste à faire avant déploiement (Phase 3)
+## ⚠️ Incident du 8 août 2026 (résolu) — migration Phase 3 jamais appliquée en prod
 
-Le code de la Phase 3 est sur `master`, testé (180 tests automatisés au total, tous passants), mais **rien n'a été déployé**. Même déroulé que pour la Phase 2 :
+Le déploiement de la Phase 3 a d'abord échoué silencieusement : `schema.prisma` avait bien les nouvelles colonnes (`User.totalXp`/`level`/`mvpCount`), mais `npx prisma db push` n'avait jamais été lancé contre la base de production avant le déploiement — `GET /me` plantait alors **tout le process serveur** au premier `/login` (Prisma `P2022`, colonne manquante), pas juste cette requête, et ECS redémarrait en boucle sur le même mur. Diagnostiqué via les logs CloudWatch, corrigé en lançant la migration manquante via ECS Exec. Deux garde-fous ajoutés dans la foulée pour que ça ne se reproduise pas :
 
-1. `git push origin master`.
-2. Test local d'abord : `docker compose down && docker compose up --build`, jouer une partie jusqu'à la fin, voter MVP, vérifier `/profile` (niveau, XP, MVP). Ne pas sauter cette étape — c'est exactement ce genre de test qui a attrapé un vrai bug lors de la Phase 2b (le Dockerfile).
-3. `.\deploy-manual.ps1`.
-4. **Appliquer le nouveau schéma à la base de production** — trois nouveaux champs sur `User` (`totalXp`, `level`, `mvpCount`), deux nouveaux champs sur `PlayerRecord` (`xpEarned`, `isMvp`). Même commande ECS Exec que d'habitude, additive uniquement.
-5. `terraform plan` dans `infra/aws` — aucun changement infra pour cette phase, devrait afficher "No changes." Ne pas `apply` sans relire si ce n'est pas le cas.
-6. Vérifier en prod : jouer une partie, voter MVP, checker `/profile`.
+1. **Robustesse serveur** (`apps/server/src/http/asyncHandler.ts` + middleware d'erreur global + `process.on("unhandledRejection"/"uncaughtException")` dans `index.ts`) — une erreur inattendue sur une requête ne fait plus jamais tomber tout le process, juste cette requête (500 propre).
+2. **`deploy-manual.ps1`** détecte maintenant un changement de `schema.prisma` depuis le dernier déploiement réussi et bloque avec les commandes exactes de migration avant de continuer.
+
+Détail complet dans `ARCHITECTURE.md` §9 « Pièges connus ».
 
 ## Résumé
 
@@ -26,10 +24,12 @@ Le code de la Phase 3 est sur `master`, testé (180 tests automatisés au total,
 | **Phase 1** | Comptes, pseudos de partie, profil, stats minimum, historique des parties | ✅ **Fait — en production** |
 | **Phase 2a** | Stats avancées : séries de victoires, nuits survécues en moyenne, répartition des causes de mort | ✅ **Fait — en production** |
 | **Phase 2b** | Rating générique (Elo-inspiré) + coefficients de difficulté par rôle + Performance Score (v1) + ratings spécialisés | ✅ **Fait — en production** |
-| **Phase 3** | XP/Niveaux + MVP (vote post-partie) | ✅ **Fait — testé, pas déployé** |
-| **Phase 4** (proposée) | Badges | ⬜ À faire |
-| **Phase 5** (proposée) | Classements | ⬜ À faire |
-| **Phase 6** (proposée) | Saisons | ⬜ À faire |
+| **Phase 3** | XP/Niveaux + MVP (vote post-partie) | ✅ **Fait — testé, déployé le 8 août 2026** |
+| **Phase 4** (cahier de charge #2 — voir section 17) | Nuit séquentielle + présentation + spectateur/Afterlife | ⬜ À faire |
+| **Phase 5** (cahier de charge #2 — voir section 17) | Performance Score par rôle (v2, avec journal d'événements) | ⬜ À faire |
+| **Phase 6** (cahier de charge #2 — voir section 17) | Badges + Achievements | ⬜ À faire |
+| **Phase 7** (cahier de charge #2 — voir section 17) | Classements + comparaison de profils | ⬜ À faire |
+| **Phase 8** (proposée, cahier de charge #1) | Saisons | ⬜ À faire |
 | Transversal | Architecture générique (section 16) | ✅ Respectée à chaque étape livrée |
 
 Le découpage en Phase 4-6 est une proposition de séquencement (chaque phase dépend techniquement de la précédente — les classements ont besoin du rating/XP/MVP, etc.) — pas une contrainte du cahier de charge lui-même, qui ne les ordonne pas explicitement.
@@ -216,23 +216,78 @@ Contrainte transversale, vérifiée à chaque étape livrée jusqu'ici :
 
 ---
 
+## 17. Cahier de charge #2 (reçu le 8 août 2026) — Expérience de jeu & progression sociale
+
+> Document séparé du cahier de charge #1 ci-dessus, volontairement scopé pour ne **rien changer aux règles/mécaniques des rôles existants** — uniquement l'orchestration de la nuit, la présentation, et une couche progression/social entièrement nouvelle. Six features, groupées en 4 phases ci-dessous par dépendance technique réelle (pas forcément l'ordre de la liste d'origine).
+
+### Verdict global : aucune interférence avec l'existant
+
+Aucun des 6 points ne touche `applyNightAction`/`resolve`/`isActiveOnNight` d'un rôle, ni ses règles. Le point 1 (nuit séquentielle) change **quand** un rôle a le droit d'agir, jamais **ce qu'il peut faire**. Les points 2-14 sont additifs (config, présentation, nouvelle couche stats/social) et ne redéfinissent rien.
+
+**Bonne surprise en le relisant contre `FEATURES.md`** : une bonne partie de ce cahier de charge #2 était *déjà* le plan proposé pour la suite du cahier de charge #1, juste jamais formalisé avec autant de détail :
+- **Performance Score par rôle** (point 9) = exactement le prérequis déjà documenté à la section 8 ci-dessus (« journal d'événements structuré côté moteur, puis remplir `PERFORMANCE_SCORERS` rôle par rôle ») — pas une nouvelle idée, juste la confirmation qu'il faut le faire.
+- **Badges** (points 10-11) = déjà en table comme « Phase 4 proposée » avant même ce document.
+- **Classements** (points 12-14) = déjà en table comme « Phase 5 proposée », avec la même conclusion (« aucune donnée manquante, tout existe déjà »).
+
+Le vraiment nouveau, c'est : la nuit séquentielle (point 1, la plus grosse pièce), la présentation de nuit (points 2-6), et Spectateur + Afterlife (points 7-8).
+
+### 17.1 Nuit séquentielle (point 1-6 du document) — le plus gros morceau, et la fondation
+
+**Comment ça s'articule avec l'existant** : `packages/game-engine` a déjà tout ce qu'il faut pour construire ça *par-dessus*, sans toucher aux rôles :
+- `ROLE_REGISTRY` + `nightPriority` définissent déjà un ordre total entre rôles.
+- `NightResolver.getActiveNightRoles(ctx, nightNumber)` filtre déjà les rôles « en jeu cette nuit précise » (présent dans la partie + `isActiveOnNight()` vrai) — exactement la logique demandée au point 3 (« étapes conditionnelles »), déjà là.
+- `isActiveOnNight(ctx, nightNumber)` existe déjà par rôle (ex. Mowgli n'agit qu'à la nuit 1) — le point « première nuit vs nuit normale » du document est déjà résolu par rôle, juste jamais exposé comme timeline dans l'UI.
+
+**Ce qui manque réellement** (nouveau, mais isolé de la logique des rôles) :
+1. Un orchestrateur de nuit (nouveau, ex. `NightSequencer.ts`) qui, au lieu d'envoyer tous les prompts actifs d'un coup (comportement actuel), avance étape par étape dans `getActiveNightRoles()` — un rôle à la fois, avec un timer serveur (même famille que les timers déjà existants pour les débats/successions de Chef).
+2. Extension de `GameConfig` : ordre des étapes + durée par étape, configurable à la création de partie (défaut = l'ordre `nightPriority` actuel, donc rien ne casse si l'admin ne touche à rien).
+3. Nouveaux événements socket (`NIGHT_STEP_BEGIN`/`NIGHT_STEP_END` ou équivalent) + écran admin de configuration (point 4) + nouveau composant web de présentation séquentielle (point 5-6, remplace l'affichage actuel « tous les prompts actifs en même temps »).
+
+**Points d'attention identifiés, à trancher pendant la conception (pas des bloqueurs, juste des décisions à ne pas oublier)** :
+- **Loup Vert** a un deuxième pouvoir (deviner/voler, `engine/LoupVert.ts`) qui vit hors du système de rôle standard, sur des canaux socket dédiés, justement parce qu'il peut avoir jusqu'à 3 choses en attente en même temps. Il faudra décider où son étape de deviner/voler se place dans la séquence (probablement dans l'étape « Loups », en parallèle du vote de meute) — et une piste intéressante : si le pouvoir volé correspond à un rôle plus tardif dans l'ordre (ex. vole la Sorcière), le système séquentiel pourrait naturellement lui faire utiliser ce pouvoir *à la place de la Sorcière*, à ce moment précis de la séquence plutôt que dans sa propre étape — plus élégant que ce qui existe aujourd'hui, à confirmer avec l'utilisateur.
+- **Dépendances d'ordre déjà existantes à préserver** : la Sorcière a besoin de connaître la cible des loups avant d'agir — déjà garanti aujourd'hui par `nightPriority`, doit rester garanti à l'identique dans le système séquentiel (résoudre l'étape des loups avant d'ouvrir celle de la Sorcière, pas juste envoyer les prompts dans l'ordre sans attendre la résolution).
+- **Salle des loups** (vote collectif, état `wolfRoom`) devient « l'étape Loups » avec son propre timer — compatible, juste un habillage différent d'un mécanisme qui existe déjà.
+
+### 17.2 Présentation de nuit (point 5-6) — dépend directement de 17.1
+
+Couche purement présentation une fois 17.1 en place : transitions (« 🌙 La nuit tombe... », « 🛡️ Le Salvateur se réveille »), écran neutre (« Le village dort... ») pour les joueurs sans rien à faire cette étape-là. Déjà partiellement vrai aujourd'hui côté vie privée (un Villageois ne reçoit jamais le `NIGHT_PROMPT` d'un autre rôle) — ici on ajoute la mise en scène, pas la sécurité (déjà bonne).
+
+### 17.3 Spectateur + Afterlife (point 7-8) — indépendant de 17.1/17.2, peut être fait en parallèle
+
+**Déjà vérifié** : `PlayerPublic`/`InternalPlayer` ont un champ `isSpectator: boolean` (`packages/shared`, `packages/game-engine`) — mais il est mis à `false` à la création du joueur et **n'est jamais réécrit ailleurs dans tout `game-engine`**. Un champ prévu mais jamais branché à ce jour, donc aucun risque de conflit : le réutiliser pour « joueur mort » (plutôt que d'en créer un distinct) est sûr et n'affecte aucun comportement existant, puisque rien ne le lit ni ne le modifie actuellement.
+Le blocage serveur des actions d'un mort existe déjà (`submitNightAction` rejette `!player.isAlive`) — ce qui manque, c'est la présentation (écran « Vous êtes mort → Mode spectateur ») et le chat privé lui-même. Le chat des morts (« Afterlife ») peut être construit exactement comme `WolfChat` existant (`relayWolfChatMessage`, salle dédiée, vérification côté serveur de l'éligibilité) — un pattern déjà en place et éprouvé, juste appliqué à « est mort » plutôt qu'« est loup ».
+
+### 17.4 Performance Score v2, Badges, Classements (point 9-14) — indépendant de 17.1-17.3, peut être fait en parallèle ou avant
+
+Voir sections 8, 13, 14 ci-dessus — rien de nouveau ici par rapport à ce qui était déjà planifié, ce document ne fait que le confirmer et le détailler (catégories de classement, format de la page achievements, badges secrets). Le seul vrai prérequis technique (journal d'événements structuré) reste à construire, indépendamment de la nuit séquentielle.
+
+### Ordre recommandé
+
+Le document propose : Nuit séquentielle → Présentation → Spectateur/Afterlife → Performance → Badges → Classements. **Globalement d'accord**, avec une nuance : 17.1-17.2 (nuit) et 17.3 (spectateur/Afterlife) et 17.4 (performance/badges/classements) touchent trois couches complètement indépendantes du code (moteur de nuit / présentation ↔ chat+mort ↔ stats/social) — rien n'empêche de paralléliser ou de réordonner selon ce qui compte le plus à voir tourner en premier. En particulier, **17.4 (Badges + Classements) pourrait sortir avant 17.1** si l'utilisateur préfère un gain visible rapide : toutes les données existent déjà, aucune dépendance sur le moteur de nuit.
+
+1. **17.1 Nuit séquentielle** (fondation technique, le plus gros morceau — orchestrateur + config admin + timers serveur).
+2. **17.2 Présentation de nuit** (dépend de 17.1).
+3. **17.3 Spectateur + Afterlife** (indépendant, peut être fait avant/en parallèle de 17.1-17.2).
+4. **17.4 Performance Score v2 → Badges → Classements** (indépendant, peut être fait avant/en parallèle — commencer par le journal d'événements).
+
+**À confirmer avec l'utilisateur avant de commencer** : l'ordre ci-dessus convient-il, ou préfère-t-il un gain visible rapide (17.4) avant le plus gros chantier (17.1) ? Et la question Loup Vert soulevée en 17.1 (où utilise-t-il un pouvoir volé dans la séquence ?).
+
+---
+
 ## Recommandation pour la suite
 
-Fait (Phases 1, 2a, 2b — en production ; Phase 3 — testée, pas encore déployée) :
+Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
 
 1. ~~Compléter les statistiques restantes de la section 4~~ ✅
 2. ~~Coefficients de difficulté par rôle (section 7)~~ ✅
-3. ~~Performance Score par rôle (section 8)~~ 🚧 v1 générique seulement — voir la limite honnête documentée dans cette section
+3. ~~Performance Score par rôle (section 8)~~ 🚧 v1 générique seulement — voir la limite honnête documentée dans cette section, et section 17 pour la v2
 4. ~~Rating générique + calcul final (sections 6 et 9)~~ ✅
 5. ~~Ratings spécialisés (section 10)~~ ✅
 6. ~~XP + Niveau (section 11)~~ ✅
 7. ~~MVP (section 12)~~ ✅
 
-Reste à faire, par ordre de dépendance :
+Reste à faire du cahier de charge #1, par ordre de dépendance :
 
-1. **Journal d'événements structuré côté moteur** — pas fait, et c'est ce qui bloque un vrai Performance Score par rôle (section 8) au-delà de la formule générique actuelle. Recommandé avant d'aller plus loin sur les scores de performance, mais pas bloquant pour Badges/Classements/Saisons ci-dessous.
-2. **Badges** (section 13) — tout ce dont ça a besoin existe maintenant (rating, historique, XP, MVP) ; dépend juste de quels badges précis on veut définir en premier.
-3. **Classements** (section 14) — toutes les données nécessaires existent déjà (rating, victoires, XP, MVP) ; c'est la première section où absolument rien ne bloque plus.
-4. **Saisons** (section 15) — en dernier, dépend du rating (rien à réinitialiser sans lui).
+1. **Saisons** (section 15) — seul point du cahier de charge #1 encore non planifié ; dépend du rating (rien à réinitialiser sans lui). En attente derrière le cahier de charge #2 (section 17), qui a été explicitement priorisé par l'utilisateur le 8 août 2026.
 
-À confirmer avec l'utilisateur avant de démarrer la prochaine phase : Badges ou Classements en premier, et si les choix v1 documentés ci-dessus (formule de rating, coefficients par défaut, Performance Score générique) doivent être ajustés avant d'aller plus loin.
+**Le reste (journal d'événements, Badges, Classements) a été repris et détaillé dans le cahier de charge #2 reçu le 8 août 2026 — voir section 17 ci-dessous, qui fait maintenant référence pour l'ordre de la suite.**
