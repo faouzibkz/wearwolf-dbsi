@@ -85,6 +85,12 @@ export async function applyRatingUpdates(
           }),
           totalNights: game.finalNightNumber,
           won,
+          // Cahier de charge #2 §17.4b — real per-role formulas now read
+          // this player's own recorded actions (and, for a few roles like
+          // Corbeau, the full log) instead of only survival+outcome. See
+          // GameEngine.getPlayerEvents()/getEventLog().
+          events: engine.getPlayerEvents(summary.playerId),
+          fullEventLog: engine.getEventLog(),
         });
         const roleCoefficient = getRoleDifficulty(summary.roleId, overrides);
 

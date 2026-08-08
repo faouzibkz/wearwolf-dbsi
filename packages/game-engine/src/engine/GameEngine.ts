@@ -809,8 +809,12 @@ export class GameEngine {
     const index = this.state.pendingChasseurShooterIds.indexOf(shooterId);
     if (index === -1) throw new Error("Ce joueur n'a pas de tir en attente.");
     this.state.pendingChasseurShooterIds.splice(index, 1);
+    // roleId is captured before processDeaths purely out of habit — it
+    // never changes on death (only isAlive does, see DeathQueue.ts), so
+    // reading it after would work identically.
+    const targetRoleId = this.ctx().getPlayer(targetId).roleId;
     processDeaths(this.ctx(), [{ playerId: targetId, cause: "CHASSEUR_SHOT" }]);
-    this.ctx().recordEvent({ type: "CHASSEUR_SHOT", actorId: shooterId, targetId });
+    this.ctx().recordEvent({ type: "CHASSEUR_SHOT", actorId: shooterId, targetId, targetRoleId });
 
     // Chasseur shots can happen after a night OR after a day-vote elimination.
     this.tryResumeAfterBlockers();

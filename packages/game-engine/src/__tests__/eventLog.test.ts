@@ -299,7 +299,15 @@ describe("Structured event journal (GameEvent / eventLog)", () => {
     engine.submitChasseurShot(ids[loupVertName]!, ids[chasseurName]!);
 
     expect(eventsOfType(engine, "CHASSEUR_SHOT")).toEqual([
-      { type: "CHASSEUR_SHOT", actorId: ids[loupVertName]!, targetId: ids[chasseurName]! },
+      {
+        type: "CHASSEUR_SHOT",
+        actorId: ids[loupVertName]!,
+        targetId: ids[chasseurName]!,
+        // The real Chasseur was permanently stripped to VILLAGEOIS the
+        // moment the Loup Vert correctly guessed CHASSEUR (see LoupVert.ts)
+        // — the power transferred, the roleId did not.
+        targetRoleId: "VILLAGEOIS",
+      },
     ]);
   });
 

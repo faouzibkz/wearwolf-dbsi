@@ -3,6 +3,15 @@ export {
   genericPerformanceScore,
   computePerformanceScore,
   PERFORMANCE_SCORERS,
+  voyantePerformanceScore,
+  salvateurPerformanceScore,
+  sorcierePerformanceScore,
+  alienPerformanceScore,
+  wolfPackPerformanceScore,
+  loupVertPerformanceScore,
+  chasseurPerformanceScore,
+  barbiePerformanceScore,
+  corbeauPerformanceScore,
 } from "./performance";
 export type { PerformanceContext, PerformanceScorer } from "./performance";
 export { computeRatingDelta, specializedScopeForTeam, INITIAL_RATING } from "./rating";

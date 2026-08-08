@@ -12,5 +12,6 @@ export type {
 } from "./internalTypes";
 export type { RoleModule, NightActionRequest } from "./roles/Role";
 export { ROLE_REGISTRY, getRolesByNightPriority } from "./roles/registry";
-export type { GameEvent, GameEventType } from "./events";
+// GameEvent/GameEventType live in @loupgarou/shared (see events.ts's doc
+// comment) and are already re-exported by the line below.
 export * from "@loupgarou/shared";
