@@ -98,6 +98,9 @@ export default function ProfilePage() {
           ← Accueil
         </Link>
         <div className="flex items-center gap-4">
+          <Link href="/compare" className="text-night-100/50 hover:text-gold-300 text-sm transition-colors">
+            Comparer
+          </Link>
           <Link href="/leaderboard" className="text-night-100/50 hover:text-gold-300 text-sm transition-colors">
             Classements
           </Link>
