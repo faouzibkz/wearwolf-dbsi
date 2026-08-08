@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ROLE_METADATA,
   SOCKET_EVENTS,
+  type AfterlifeChatMessagePayload,
+  type AfterlifeRoomStatePayload,
   type BarbieRevealResultPayload,
   type EndGameStats,
   type GameStatePublic,
@@ -39,6 +41,7 @@ import { BarbiePowerPanel } from "@/components/BarbiePowerPanel";
 import { BarbieRevealOverlay } from "@/components/BarbieRevealOverlay";
 import { LiveVoteList } from "@/components/LiveVoteList";
 import { WolfChat } from "@/components/WolfChat";
+import { AfterlifeChat } from "@/components/AfterlifeChat";
 import { EndGamePanel } from "@/components/EndGamePanel";
 
 /**
@@ -103,6 +106,12 @@ export default function PlayPage() {
   const [chefSuccessionTargets, setChefSuccessionTargets] = useState<string[] | null>(null);
   const [wolfRoom, setWolfRoom] = useState<WolfRoomStatePayload | null>(null);
   const [wolfMessages, setWolfMessages] = useState<WolfChatMessagePayload[]>([]);
+  // Cahier de charge #2 §17.3 — null for every still-alive player (the
+  // server never pushes AFTERLIFE_ROOM_STATE to them, see
+  // GameEngine.getAfterlifeMemberIds), and unlike wolfRoom this persists
+  // across every phase once populated, not just NIGHT.
+  const [afterlifeRoom, setAfterlifeRoom] = useState<AfterlifeRoomStatePayload | null>(null);
+  const [afterlifeMessages, setAfterlifeMessages] = useState<AfterlifeChatMessagePayload[]>([]);
   const [notifications, setNotifications] = useState<NotificationPayload[]>([]);
   const [endStats, setEndStats] = useState<unknown>(null);
   const [mvpState, setMvpState] = useState<MvpStatePayload | null>(null);
@@ -208,6 +217,12 @@ export default function PlayPage() {
     socket.on(SOCKET_EVENTS.WOLF_CHAT_MESSAGE, (payload: WolfChatMessagePayload) =>
       setWolfMessages((prev) => [...prev, payload]),
     );
+    socket.on(SOCKET_EVENTS.AFTERLIFE_ROOM_STATE, (payload: AfterlifeRoomStatePayload) =>
+      setAfterlifeRoom(payload),
+    );
+    socket.on(SOCKET_EVENTS.AFTERLIFE_CHAT_MESSAGE, (payload: AfterlifeChatMessagePayload) =>
+      setAfterlifeMessages((prev) => [...prev, payload]),
+    );
     socket.on(SOCKET_EVENTS.NOTIFICATION, (payload: NotificationPayload) =>
       setNotifications((prev) => [...prev.slice(-4), payload]),
     );
@@ -237,6 +252,8 @@ export default function PlayPage() {
       socket.off(SOCKET_EVENTS.CHEF_SUCCESSION_PROMPT);
       socket.off(SOCKET_EVENTS.WOLF_ROOM_STATE);
       socket.off(SOCKET_EVENTS.WOLF_CHAT_MESSAGE);
+      socket.off(SOCKET_EVENTS.AFTERLIFE_ROOM_STATE);
+      socket.off(SOCKET_EVENTS.AFTERLIFE_CHAT_MESSAGE);
       socket.off(SOCKET_EVENTS.NOTIFICATION);
       socket.off(SOCKET_EVENTS.GAME_ENDED);
       socket.off(SOCKET_EVENTS.MVP_STATE);
@@ -379,6 +396,14 @@ export default function PlayPage() {
       )}
 
       {barbieReveal && <BarbieRevealOverlay result={barbieReveal} onDone={() => setBarbieReveal(null)} />}
+
+      {/* Cahier de charge #2 §17.3 — persistent across every phase (unlike
+          the wolf room, which only ever appears inside the NIGHT case
+          below): once dead, a player keeps this chat available for the
+          rest of the game, on top of whatever phase-specific view they're
+          also seeing (read-only from here on — the "(spectateur)" label
+          next to their name above already reflects this). */}
+      {!me?.isAlive && afterlifeRoom && <AfterlifeChat room={afterlifeRoom} messages={afterlifeMessages} />}
 
       {endStats ? (
         <EndGamePanel stats={endStats} myPlayerId={session.playerId} mvpState={mvpState} mvpResult={mvpResult} />
