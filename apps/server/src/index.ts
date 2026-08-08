@@ -8,6 +8,7 @@ import { registerSocketHandlers } from "./socket/handlers.js";
 import { authRouter } from "./http/authRoutes.js";
 import { accountApiRouter } from "./http/accountRoutes.js";
 import { badgeApiRouter } from "./http/badgeRoutes.js";
+import { leaderboardApiRouter } from "./http/leaderboardRoutes.js";
 import { seedMissingRoleDifficulties } from "./rating/applyRating.js";
 
 /**
@@ -43,6 +44,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api", accountApiRouter);
 app.use("/api", badgeApiRouter);
+app.use("/api", leaderboardApiRouter);
 
 /**
  * Global HTTP error-handling middleware — must be registered last. Catches

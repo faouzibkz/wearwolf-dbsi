@@ -12,6 +12,10 @@ export default function HomePage() {
           contrast until hovered) so it never competes with the big "join a
           game" CTA below, which is still what most visits are here for. */}
       <div className="absolute top-4 right-4 flex items-center gap-3 text-sm animate-fade-in">
+        {/* Public, no account needed — see leaderboard/page.tsx's doc comment. */}
+        <Link href="/leaderboard" className="text-night-100/70 hover:text-gold-300 transition-colors">
+          Classements
+        </Link>
         {account === undefined ? null : account ? (
           <>
             <Link href="/profile" className="text-night-100/70 hover:text-gold-300 transition-colors">

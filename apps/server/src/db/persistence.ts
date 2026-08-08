@@ -250,6 +250,79 @@ export async function getUserGameHistory(userId: string, { limit = 20, offset = 
   };
 }
 
+// --- Leaderboards (cahier de charge #2 §17.4e) ---
+//
+// Section 14's own note turned out true: "aucune donnée manquante, tout
+// existe déjà" — every category here reads straight off User (rating/XP/
+// MVP, already incrementally maintained by applyRating.ts/
+// applyProgression.ts) or a simple aggregate over PlayerRecord (wins), the
+// same "already in the DB, just needs a query" pattern as
+// getUserAggregateStats above.
+
+export const LEADERBOARD_CATEGORIES = [
+  "RATING_GLOBAL",
+  "RATING_VILLAGE",
+  "RATING_WOLF",
+  "RATING_SOLO",
+  "XP",
+  "WINS",
+  "MVP",
+] as const;
+export type LeaderboardCategory = (typeof LEADERBOARD_CATEGORIES)[number];
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  displayName: string;
+  value: number;
+}
+
+/** Every category except WINS is a straight "sort User by this column" — WINS needs an aggregate over PlayerRecord instead, no single column for it exists on User. */
+const USER_SORT_FIELD: Partial<Record<LeaderboardCategory, string>> = {
+  RATING_GLOBAL: "ratingGlobal",
+  RATING_VILLAGE: "ratingVillage",
+  RATING_WOLF: "ratingWolf",
+  RATING_SOLO: "ratingSolo",
+  XP: "totalXp",
+  MVP: "mvpCount",
+};
+
+export async function getLeaderboard(category: LeaderboardCategory, limit = 20): Promise<LeaderboardEntry[]> {
+  if (category === "WINS") {
+    const grouped: { userId: string | null; _count: { userId: number } }[] = await prisma.playerRecord.groupBy({
+      by: ["userId"],
+      where: { result: "WON", userId: { not: null } },
+      _count: { userId: true },
+      orderBy: { _count: { userId: "desc" } },
+      take: limit,
+    });
+    const userIds = grouped.map((g) => g.userId).filter((id): id is string => Boolean(id));
+    if (userIds.length === 0) return [];
+    const users: { id: string; displayName: string }[] = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, displayName: true },
+    });
+    const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+    return grouped
+      .filter((g): g is typeof g & { userId: string } => Boolean(g.userId))
+      .map((g, i) => ({ rank: i + 1, userId: g.userId, displayName: nameById.get(g.userId) ?? "?", value: g._count.userId }));
+  }
+
+  const field = USER_SORT_FIELD[category];
+  if (!field) return [];
+  const users: Record<string, unknown>[] = await prisma.user.findMany({
+    orderBy: { [field]: "desc" },
+    take: limit,
+    select: { id: true, displayName: true, [field]: true },
+  });
+  return users.map((u, i) => ({
+    rank: i + 1,
+    userId: u.id as string,
+    displayName: u.displayName as string,
+    value: Math.round(u[field] as number),
+  }));
+}
+
 export async function listPresets() {
   return prisma.preset.findMany({ orderBy: { updatedAt: "desc" } });
 }
