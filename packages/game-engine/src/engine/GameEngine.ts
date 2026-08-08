@@ -765,6 +765,20 @@ export class GameEngine {
       });
   }
 
+  /**
+   * Cahier de charge #2 §17.3 — every dead player, all game (once dead,
+   * always eligible — death is permanent, same contract as `isSpectator`
+   * itself, see DeathQueue.processDeaths). Mirrors getWolfRoomMemberIds()'s
+   * exact shape/pattern: the one authoritative place that decides
+   * membership, so the server's Afterlife chat relay (see
+   * apps/server/src/socket/afterlife.ts) never has to re-derive "is this
+   * player dead" itself — same reasoning as the wolf room's own doc
+   * comment about never hand-rolling membership checks outside the engine.
+   */
+  getAfterlifeMemberIds(): string[] {
+    return [...this.state.players.values()].filter((p) => p.isSpectator).map((p) => p.id);
+  }
+
   resolveNightAndProceed(): { anyoneDied: boolean; blocked: boolean; mowgliTransformed: boolean } {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
     this.snapshot();

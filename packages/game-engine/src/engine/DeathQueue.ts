@@ -37,6 +37,16 @@ export function processDeaths(ctx: EngineContext, deaths: DeathRequest[]): strin
     if (!player || !player.isAlive) continue;
 
     player.isAlive = false;
+    // Cahier de charge #2 §17.3 — reuses the `isSpectator` field that was
+    // already part of InternalPlayer/PlayerPublic (created false, never
+    // written anywhere else — confirmed by grep before this change) rather
+    // than adding a parallel "isDead"/"isInAfterlife" flag: a dead player
+    // IS this game's spectator from this moment on (sees the game
+    // continue, can no longer act — submitNightAction/day-vote casting
+    // already reject !isAlive independently of this flag — and gets
+    // access to the Afterlife chat, see AfterlifeChat.ts). Never set back
+    // to false: death is permanent for the rest of this game.
+    player.isSpectator = true;
     player.deathCause = next.cause;
     // Same "Nuit N" / "Jour N" label format as the admin log (ctx.log below)
     // — see InternalPlayer.deathMoment's doc comment for why this lives on
