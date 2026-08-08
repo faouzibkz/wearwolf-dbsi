@@ -21,6 +21,12 @@ export function createNightScratch(nightNumber: number, alienForcedNightfall = f
     submittedActions: {},
     deaths: [],
     alienForcedNightfall,
+    // Populated right after this by GameEngine.startNight() when
+    // config.nightMode is SEQUENTIAL (see NightSequencer.ts) — left empty
+    // here since createNightScratch has no EngineContext to compute them
+    // from yet, and they're simply never read in SIMULTANEOUS mode.
+    sequentialSteps: [],
+    sequentialStepIndex: 0,
   };
 }
 

@@ -101,6 +101,14 @@ export interface NightScratch {
    * something, otherwise it's a strictly-dominant free action.
    */
   alienForcedNightfall: boolean;
+  /**
+   * SEQUENTIAL night mode only (GameConfig.nightMode) — see
+   * engine/NightSequencer.ts. Computed once, at the start of this specific
+   * night, by GameEngine.startNight(); always empty in SIMULTANEOUS mode
+   * (nothing in that path ever reads these two fields).
+   */
+  sequentialSteps: RoleId[][];
+  sequentialStepIndex: number;
 }
 
 export interface ChefElectionState {

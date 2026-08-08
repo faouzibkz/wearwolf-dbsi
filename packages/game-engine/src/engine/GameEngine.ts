@@ -11,7 +11,7 @@ import type {
   RoleId,
   Team,
 } from "@loupgarou/shared";
-import { CHEF_TITLE, DEFAULT_GAME_CONFIG, ROLE_METADATA } from "@loupgarou/shared";
+import { CHEF_TITLE, DEFAULT_GAME_CONFIG, ROLE_IDS, ROLE_METADATA } from "@loupgarou/shared";
 import type { EngineContext, GameInternalState, InternalPlayer, NightScratch } from "../internalTypes";
 import { generateGameCode, generatePlayerId, generateReconnectToken } from "../util/ids";
 import { shuffle } from "../util/shuffle";
@@ -22,6 +22,7 @@ import * as TieDefense from "./TieDefense";
 import * as DayVoteQueue from "./DayVoteQueue";
 import * as VoteManager from "./VoteManager";
 import * as NightResolver from "./NightResolver";
+import * as NightSequencer from "./NightSequencer";
 import * as LoupVert from "./LoupVert";
 import * as Barbie from "./Barbie";
 import * as SecondDebate from "./SecondDebate";
@@ -466,6 +467,16 @@ export class GameEngine {
     this.snapshot();
     this.state.nightNumber += 1;
     this.state.nightScratch = NightResolver.createNightScratch(this.state.nightNumber, forcedByAlien);
+    // SEQUENTIAL mode only (GameConfig.nightMode) — computed fresh for
+    // THIS night specifically (role presence/first-night-only status can
+    // both change night to night), then never recomputed until the next
+    // startNight() call. See NightSequencer.ts.
+    if (this.state.config.nightMode === "SEQUENTIAL") {
+      this.state.nightScratch.sequentialSteps = NightSequencer.computeNightSteps(
+        this.ctx(),
+        this.state.nightNumber,
+      );
+    }
     this.state.phase = "NIGHT";
     // Reset here — at the START of the night's resolution unit — rather
     // than inside resolveNightAndProceed() (the OLD reset point): the
@@ -477,15 +488,152 @@ export class GameEngine {
     this.appendLog("La nuit tombe sur le village.");
   }
 
-  /** `onlyPending` (default true): exclude players who already submitted an action tonight. See NightResolver.collectNightPrompts. */
+  /**
+   * `onlyPending` (default true): exclude players who already submitted an
+   * action tonight. See NightResolver.collectNightPrompts.
+   *
+   * SEQUENTIAL mode (GameConfig.nightMode): further filtered down to only
+   * the role(s) whose turn it currently is — see NightSequencer.ts. Every
+   * OTHER active-tonight role's prompt is withheld until its own step,
+   * exactly the cahier de charge #2 §17.1 behavior ("one role at a time").
+   * SIMULTANEOUS mode is completely unaffected — this filter is a no-op
+   * there, same as it always was.
+   */
   getNightPrompts(onlyPending = true) {
     if (this.state.phase !== "NIGHT") return [];
-    return NightResolver.collectNightPrompts(this.ctx(), this.state.nightNumber, onlyPending);
+    const all = NightResolver.collectNightPrompts(this.ctx(), this.state.nightNumber, onlyPending);
+    if (this.state.config.nightMode !== "SEQUENTIAL") return all;
+    const currentStepRoleIds = this.getCurrentNightStepRoleIds();
+    if (!currentStepRoleIds) return [];
+    return all.filter((p) => currentStepRoleIds.includes(p.player.roleId));
   }
 
   submitNightAction(playerId: string, actionType: string, targetId?: string, guessedRoleId?: RoleId): void {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
     NightResolver.submitNightAction(this.ctx(), playerId, actionType, targetId, guessedRoleId);
+  }
+
+  // -------------------------------------------------------------------
+  // SEQUENTIAL night mode (cahier de charge #2, §17.1) — see
+  // NightSequencer.ts for the pure step-computation logic this wraps.
+  // Every method below is a no-op / returns a "not applicable" value
+  // outside NIGHT phase or outside SEQUENTIAL mode, by design: callers
+  // (apps/server) don't need to branch on nightMode themselves before
+  // calling these — they can always call them and just check the result.
+  // -------------------------------------------------------------------
+
+  isSequentialNightMode(): boolean {
+    return this.state.phase === "NIGHT" && this.state.config.nightMode === "SEQUENTIAL";
+  }
+
+  /** null once every step is done (night is about to resolve) or outside a SEQUENTIAL night. */
+  getCurrentNightStepRoleIds(): RoleId[] | null {
+    if (!this.isSequentialNightMode()) return null;
+    const scratch = this.state.nightScratch!;
+    return scratch.sequentialSteps[scratch.sequentialStepIndex] ?? null;
+  }
+
+  /** 1-based `stepIndex` (0 if not in a SEQUENTIAL night) for a "3 / 6" style progress display. */
+  getNightStepProgress(): { stepIndex: number; totalSteps: number } {
+    if (!this.isSequentialNightMode()) return { stepIndex: 0, totalSteps: 0 };
+    const scratch = this.state.nightScratch!;
+    const total = scratch.sequentialSteps.length;
+    const current = Math.min(scratch.sequentialStepIndex + 1, total);
+    return { stepIndex: current, totalSteps: total };
+  }
+
+  getCurrentNightStepDurationSeconds(): number | null {
+    const roleIds = this.getCurrentNightStepRoleIds();
+    if (!roleIds) return null;
+    return NightSequencer.stepDurationSeconds(this.ctx(), roleIds);
+  }
+
+  /**
+   * Called by the server after every mutation during a SEQUENTIAL night
+   * (same "call after every state change" pattern as sync()/pushAllPrompts
+   * elsewhere — see apps/server/src/socket/sync.ts). Advances past every
+   * step that's now fully submitted, in order, stopping at the first
+   * incomplete one — a single call safely handles "several roles in a row
+   * had nobody alive to act" without the caller needing a loop. Once every
+   * step is behind us, resolves the night and transitions to MORNING,
+   * exactly like a normal forceNextPhase(NIGHT) would.
+   *
+   * Returns true if anything changed (step advanced and/or the night
+   * resolved) so the caller knows whether a fresh broadcast is warranted.
+   */
+  advanceNightStepIfComplete(): boolean {
+    if (!this.isSequentialNightMode()) return false;
+    let advanced = false;
+    while (true) {
+      const roleIds = this.getCurrentNightStepRoleIds();
+      if (!roleIds) {
+        this.resolveNightAndProceed();
+        return true;
+      }
+      if (!NightSequencer.isStepComplete(this.ctx(), roleIds)) return advanced;
+      this.state.nightScratch!.sequentialStepIndex += 1;
+      advanced = true;
+    }
+  }
+
+  /**
+   * Called by the server when a SEQUENTIAL step's own timer expires with
+   * players still owed an action. For most roles this force-submits "SKIP"
+   * on their behalf (harmless — every role module treats an unrecognized
+   * actionType as a no-op, same as a human choosing not to act) and moves
+   * on. One documented exception: the Alien on a night HE forced (see
+   * roles/alien.ts) — his guess is mandatory there, so "SKIP" is REJECTED
+   * (throws) rather than silently accepted, exactly like a real player
+   * being told "no, you have to guess." A timed-out mandatory guess can't
+   * just vanish either, so it falls back to the same "auto-pick at random"
+   * safety net already used for an unresolved Chasseur shot / Chef
+   * succession (see resolvePendingBlockersIfAny) rather than hanging the
+   * whole night. After forcing the current step closed, this always
+   * advances (delegates to advanceNightStepIfComplete()).
+   */
+  forceAdvanceNightStep(): boolean {
+    if (!this.isSequentialNightMode()) return false;
+    const roleIds = this.getCurrentNightStepRoleIds();
+    if (!roleIds) return this.advanceNightStepIfComplete();
+
+    const scratch = this.state.nightScratch!;
+    for (const roleId of roleIds) {
+      for (const holder of this.ctx().getAliveByRole(roleId)) {
+        if (scratch.submittedActions[holder.id]) continue;
+        try {
+          NightResolver.submitNightAction(this.ctx(), holder.id, "SKIP");
+        } catch (err) {
+          if (roleId === "ALIEN") {
+            const eligible = this.ctx().getAlivePlayers().filter((p) => p.id !== holder.id);
+            const target = shuffle(eligible, this.rng)[0];
+            const guessedRoleId = shuffle(
+              ROLE_IDS.filter((id) => id !== "ALIEN"),
+              this.rng,
+            )[0]!;
+            if (target) {
+              this.appendLog(
+                `${holder.nickname} (Alien) n'a pas deviné à temps — cible et rôle choisis au hasard.`,
+              );
+              NightResolver.submitNightAction(this.ctx(), holder.id, "ALIEN_GUESS", target.id, guessedRoleId);
+            } else {
+              // No eligible target at all (shouldn't happen — would mean
+              // the Alien is the only living player) — defensively unstick
+              // the step anyway rather than hang the night forever.
+              scratch.submittedActions[holder.id] = { playerId: holder.id, actionType: "SKIP" };
+            }
+          } else {
+            // Not expected from any current role (every applyNightAction
+            // treats an unrecognized actionType as a no-op) — but never
+            // let an unforeseen throw permanently strand a step. Logged so
+            // it's visible, and defensively marked submitted so the night
+            // can still conclude.
+            console.error(`[night-sequencer] forced SKIP rejected for ${roleId}`, err);
+            scratch.submittedActions[holder.id] = { playerId: holder.id, actionType: "SKIP" };
+          }
+        }
+      }
+    }
+    return this.advanceNightStepIfComplete();
   }
 
   // -------------------------------------------------------------------
