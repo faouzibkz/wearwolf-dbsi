@@ -81,7 +81,7 @@ Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_
 
 127 tests automatisés (`packages/game-engine/src/__tests__/*.test.ts`, 22 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, et `finalPlayerSummaries.test.ts` pour la Phase 1.
 
-Depuis la Phase 2 : +19 tests dans `packages/rating` (rating, performance, coefficients — §3.5) et +13 dans `apps/server/src/stats/deriveStats.test.ts` (§4.3) — **159 tests au total**, tous exécutés réellement, tous passants.
+Depuis la Phase 2 : +19 tests dans `packages/rating` (rating, performance, coefficients — §3.5) et +13 dans `apps/server/src/stats/deriveStats.test.ts` (§4.3). Depuis la Phase 3 (§3.6) : +8 dans `progression/deriveProgression.test.ts`, +4 dans `mvp/tallyMvpVotes.test.ts`, +9 dans `mvp/mvpVotingRegistry.test.ts` — **180 tests au total**, tous exécutés réellement, tous passants.
 
 ---
 
@@ -94,6 +94,19 @@ Package isolé, **sans dépendance à Prisma ni au moteur de jeu**, sur le même
 - `rating.ts` — `computeRatingDelta()`, la formule Elo-inspirée (section 9) ; `specializedScopeForTeam()` pour les ratings Village/Loups/Solo (section 10).
 
 `apps/server/src/rating/applyRating.ts` est la seule couche qui touche Prisma : elle récupère les lignes nécessaires (utilisateurs liés, coefficients configurés), appelle les fonctions pures de `packages/rating`, et persiste le résultat. Appelée depuis `socket/handlers.ts`'s `sync()`, **après** `finalizeGameHistory()` (elle met à jour `PlayerRecord.ratingDelta` sur les lignes que `finalizeGameHistory` vient de créer — l'ordre compte).
+
+---
+
+## 3.6 XP, niveau et MVP (Phase 3)
+
+Contrairement au rating, ceci n'a pas de package dédié — c'est assez petit pour vivre directement dans `apps/server`, toujours avec la même séparation "cœur pur testé / glue Prisma fine" :
+
+- `progression/deriveProgression.ts` — pur : `computeBaseGameXp(won)` (participation + victoire), `computeMvpBonusXp()`, `computeLevel(totalXp)`. Testé (8 tests).
+- `mvp/tallyMvpVotes.ts` — pur : dépouille les votes, retourne TOUS les joueurs à égalité au score maximum (règle produit confirmée explicitement). Testé (4 tests).
+- `mvp/mvpVotingRegistry.ts` — état en mémoire du vote MVP, une entrée par partie (même schéma que `gameRegistry`), aucune dépendance à Prisma — testable et testé (9 tests) malgré la présence d'état mutable.
+- `progression/applyProgression.ts` — la seule couche qui touche Prisma. `applyBaseProgression()` tourne à `GAME_ENDED`, comme `applyRatingUpdates`. `applyMvpBonus()` tourne séparément, une fois le vote MVP terminé — potentiellement bien après `GAME_ENDED`, donc il résout le compte de chaque gagnant via la ligne `PlayerRecord` déjà écrite par `finalizeGameHistory` plutôt que via `gameRegistry.userIdByPlayerId`, qui peut déjà avoir été vidé à ce moment-là.
+
+Le vote MVP lui-même s'ouvre automatiquement dans `socket/handlers.ts`'s `sync()` dès que `GAME_ENDED` part, et se termine soit naturellement (tous les joueurs de la partie ont voté), soit via `ADMIN_FORCE_MVP_FINALIZE` (filet de sécurité pour un joueur déconnecté qui ne revient jamais voter — même logique que `ADMIN_FORCE_NEXT_PHASE` ailleurs dans l'app). Vote à bulletin secret : `MVP_STATE` ne diffuse jamais qui a voté pour qui, seulement la progression.
 
 ---
 

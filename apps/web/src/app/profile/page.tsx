@@ -31,6 +31,7 @@ interface ProfileData {
     survivedUntilEnd: number;
   };
   ratings: { global: number; village: number; wolf: number; solo: number };
+  progression: { totalXp: number; level: number; mvpCount: number };
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -85,8 +86,10 @@ export default function ProfilePage() {
     );
   }
 
-  const { user, stats, ratings } = data;
+  const { user, stats, ratings, progression } = data;
   const winRatePct = Math.round(stats.winRate * 100);
+  // "Tous les 100 XP, le joueur gagne un niveau" — see apps/server/src/progression/deriveProgression.ts.
+  const xpIntoLevel = progression.totalXp % 100;
 
   return (
     <main className="min-h-screen px-6 py-10 flex flex-col items-center gap-6">
@@ -110,6 +113,23 @@ export default function ProfilePage() {
             @{user.username} — membre depuis le {formatDate(user.createdAt)}
           </p>
         </div>
+      </section>
+
+      {/* XP / niveau / MVP (Phase 3 — spec sections 11/12). Independent of
+          rating, per the spec's own wording — see progression/deriveProgression.ts. */}
+      <section className="card w-full max-w-2xl animate-fade-in">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-display text-gold-300">Niveau {progression.level}</span>
+          <span className="text-xs text-night-100/50">
+            {xpIntoLevel} / 100 XP · {progression.totalXp} XP au total
+          </span>
+        </div>
+        <div className="h-1.5 rounded-full bg-night-900/60 overflow-hidden mb-3">
+          <div className="h-full bg-gold-400 rounded-full transition-all duration-500 ease-out" style={{ width: `${xpIntoLevel}%` }} />
+        </div>
+        <p className="text-sm text-night-100/70 text-center">
+          🏅 {progression.mvpCount} MVP{progression.mvpCount !== 1 ? "s" : ""}
+        </p>
       </section>
 
       {/* Ratings (Phase 2b — spec sections 6/10). Global always shown;

@@ -47,6 +47,13 @@ accountApiRouter.get("/profile/me", requireSession, async (req: AuthedRequest, r
       wolf: user.ratingWolf,
       solo: user.ratingSolo,
     },
+    // Phase 3 (cahier de charge sections 11/12) — see
+    // apps/server/src/progression/applyProgression.ts.
+    progression: {
+      totalXp: user.totalXp,
+      level: user.level,
+      mvpCount: user.mvpCount,
+    },
   });
 });
 

@@ -9,6 +9,8 @@ import {
   type EndGameStats,
   type GameStatePublic,
   type LoupVertGuessPromptPayload,
+  type MvpResultPayload,
+  type MvpStatePayload,
   type NightPromptPayload,
   type NotificationPayload,
   type PrivateRoleStatePayload,
@@ -58,6 +60,8 @@ export default function PlayPage() {
   const [wolfMessages, setWolfMessages] = useState<WolfChatMessagePayload[]>([]);
   const [notifications, setNotifications] = useState<NotificationPayload[]>([]);
   const [endStats, setEndStats] = useState<unknown>(null);
+  const [mvpState, setMvpState] = useState<MvpStatePayload | null>(null);
+  const [mvpResult, setMvpResult] = useState<MvpResultPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRoleDetail, setShowRoleDetail] = useState(false);
   const [confirmingChefSkip, setConfirmingChefSkip] = useState(false);
@@ -151,8 +155,15 @@ export default function PlayPage() {
     );
     socket.on(SOCKET_EVENTS.GAME_ENDED, (payload: { stats: EndGameStats }) => {
       setEndStats(payload.stats);
+      // Fresh game, fresh MVP vote - clear any leftover state from a
+      // previous game this same tab might have shown (shouldn't normally
+      // happen, but costs nothing to guard against).
+      setMvpState(null);
+      setMvpResult(null);
       playVictoryFanfare(soundEnabledRef.current, payload.stats.winner);
     });
+    socket.on(SOCKET_EVENTS.MVP_STATE, (payload: MvpStatePayload) => setMvpState(payload));
+    socket.on(SOCKET_EVENTS.MVP_RESULT, (payload: MvpResultPayload) => setMvpResult(payload));
 
     return () => {
       socket.off("connect", reconnect);
@@ -169,6 +180,8 @@ export default function PlayPage() {
       socket.off(SOCKET_EVENTS.WOLF_CHAT_MESSAGE);
       socket.off(SOCKET_EVENTS.NOTIFICATION);
       socket.off(SOCKET_EVENTS.GAME_ENDED);
+      socket.off(SOCKET_EVENTS.MVP_STATE);
+      socket.off(SOCKET_EVENTS.MVP_RESULT);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
@@ -309,7 +322,7 @@ export default function PlayPage() {
       {barbieReveal && <BarbieRevealOverlay result={barbieReveal} onDone={() => setBarbieReveal(null)} />}
 
       {endStats ? (
-        <EndGamePanel stats={endStats} />
+        <EndGamePanel stats={endStats} myPlayerId={session.playerId} mvpState={mvpState} mvpResult={mvpResult} />
       ) : (
         <PhaseView
           key={state.phase}

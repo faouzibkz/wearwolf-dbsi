@@ -154,6 +154,18 @@ function ControlBar({ admin }: { admin: AdminStatePayload }) {
       >
         ⏹ Terminer
       </button>
+      {admin.state.phase === "ENDED" && (
+        <button
+          className="btn-secondary"
+          disabled={busy}
+          onClick={() =>
+            confirm("Forcer le résultat du vote MVP maintenant, même si tout le monde n'a pas voté ?") &&
+            act(SOCKET_EVENTS.ADMIN_FORCE_MVP_FINALIZE)
+          }
+        >
+          🏅 Forcer le résultat MVP
+        </button>
+      )}
     </div>
   );
 }

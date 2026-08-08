@@ -160,6 +160,20 @@ export const SOCKET_EVENTS = {
 
   // --- end game ---
   GAME_ENDED: "game:ended",
+
+  // --- post-game MVP vote (cahier de charge section 12). Opens
+  // automatically the moment GAME_ENDED fires (see socket/handlers.ts's
+  // sync()); every player who was in the game gets exactly one vote for
+  // someone ELSE (no self-votes). Deliberately a secret ballot — MVP_STATE
+  // only ever reveals how many votes are in, never who voted for whom —
+  // unlike the day village vote, which is intentionally open. ---
+  MVP_VOTE_CAST: "mvp:voteCast",
+  MVP_STATE: "mvp:state", // broadcast after every cast vote: progress only, never the choices themselves
+  MVP_RESULT: "mvp:result", // broadcast once finalized (naturally, or via ADMIN_FORCE_MVP_FINALIZE)
+  // Safety valve for a straggler who disconnected and never came back to
+  // vote — same idea as ADMIN_FORCE_NEXT_PHASE, since this vote otherwise
+  // has no fixed deadline.
+  ADMIN_FORCE_MVP_FINALIZE: "admin:forceMvpFinalize",
 } as const;
 
 export type SocketEventName = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS];
@@ -386,4 +400,27 @@ export interface GameEndedPayload {
 /** Ack response for TIME_SYNC — see the SOCKET_EVENTS.TIME_SYNC comment. */
 export interface TimeSyncResultPayload {
   serverNow: number;
+}
+
+/** voterId is implicit (the caller's own socket.data.playerId), same convention as DayVoteCastPayload etc. */
+export interface MvpVoteCastPayload {
+  votedForId: string;
+}
+
+/**
+ * Broadcast after every vote is cast, and once at MVP voting's own start.
+ * Deliberately reveals only progress, never any individual's choice — see
+ * the MVP_STATE comment in SOCKET_EVENTS.
+ */
+export interface MvpStatePayload {
+  votesCast: number;
+  totalEligible: number;
+  /** Which players have voted so far (not who they voted for) — lets the UI show "waiting on: ..." */
+  votedPlayerIds: string[];
+  finalized: boolean;
+}
+
+export interface MvpResultPayload {
+  /** More than one entry means a tie — see FEATURES.md section 12 for the "everyone tied wins" rule. Empty if nobody voted before this finalized. */
+  winners: { playerId: string; nickname: string }[];
 }

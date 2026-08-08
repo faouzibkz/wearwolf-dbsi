@@ -44,6 +44,14 @@ model User {
   ratingWolf    Float @default(1000)
   ratingSolo    Float @default(1000)
 
+  // Phase 3 — cahier de charge sections 11/12 (XP/niveau + MVP). Independent
+  // of rating (the spec says so explicitly) — see
+  // apps/server/src/progression/deriveProgression.ts for the pure XP/level
+  // math and applyProgression.ts for how these get updated.
+  totalXp  Int @default(0)
+  level    Int @default(1)
+  mvpCount Int @default(0)
+
   playerRecords PlayerRecord[]
 }
 
@@ -117,6 +125,13 @@ model PlayerRecord {
   // the authoritative current rating always lives on User, never derived
   // by summing these.
   ratingDelta  Float?
+  // Phase 3 (sections 11/12) — total XP this game actually awarded this
+  // player (participation + victory + MVP bonus, whichever applied),
+  // purely informational like ratingDelta above. isMvp is set once the
+  // post-game MVP vote finalizes for this game (see
+  // apps/server/src/mvp/*) - true for every tied winner, not just one.
+  xpEarned     Int     @default(0)
+  isMvp        Boolean @default(false)
   joinedAt     DateTime @default(now())
 
   // Nullable: a handful of legacy PlayerRecord rows (written before accounts

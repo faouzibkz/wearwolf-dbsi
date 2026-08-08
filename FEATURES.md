@@ -2,44 +2,41 @@
 
 > Ce document suit, section par section, le cahier de charge fourni le 6 août 2026. Il est mis à jour à chaque phase livrée — c'est la source de vérité sur ce qui est fait, en cours, ou pas commencé. Voir **[ARCHITECTURE.md](./ARCHITECTURE.md)** pour le détail technique de ce qui est listé ✅ ici.
 >
-> **Décision de scope** : le cahier de charge a été volontairement découpé en phases plutôt que livré en un bloc (accord explicite avec l'utilisateur). **Phase 1 est terminée et déployée en production** (`https://loupgarou-dbsi.com`). **Phase 2 (2a + 2b) est terminée, testée, et committée sur `master` — mais PAS ENCORE déployée en production** (voir "Ce qu'il reste à faire avant déploiement" ci-dessous). Phases 2a/2b ont été construites de façon autonome (session du 7 août 2026, sans supervision utilisateur en direct) — chaque décision de conception ambiguë est documentée explicitement ci-dessous et dans le code, pour relecture.
+> **Décision de scope** : le cahier de charge a été volontairement découpé en phases plutôt que livré en un bloc (accord explicite avec l'utilisateur). **Phases 1 et 2 (2a + 2b) sont terminées et déployées en production** (`https://loupgarou-dbsi.com`, vérifié en jeu réel le 8 août 2026). **Phase 3 (XP/niveau + MVP) est terminée, testée, et committée sur `master` — mais pas encore déployée** (voir "Ce qu'il reste à faire avant déploiement" ci-dessous).
 
 Légende : ✅ Fait · 🚧 Partiel · ⬜ À faire
 
 ---
 
-## ⚠️ Ce qu'il reste à faire avant déploiement (Phase 2)
+## ⚠️ Ce qu'il reste à faire avant déploiement (Phase 3)
 
-Le code de la Phase 2 est sur `master` (commits taggés `phase-2a-advanced-stats` et `phase-2b-rating-engine`), testé (159 tests automatisés, tous passants), mais **rien n'a été déployé** — c'est resté volontairement hors du périmètre autonome de cette session (voir plus bas, "Limites respectées pendant le travail autonome"). Avant que ça tourne en prod :
+Le code de la Phase 3 est sur `master`, testé (180 tests automatisés au total, tous passants), mais **rien n'a été déployé**. Même déroulé que pour la Phase 2 :
 
-1. `git push origin master --follow-tags` — les commits/tags sont locaux uniquement, jamais poussés sur GitHub (pas d'identifiants git dans le bac à sable où ce travail a été fait).
-2. Reconstruire et redéployer normalement (`deploy-manual.ps1` ou le pipeline CI).
-3. **Appliquer le nouveau schéma à la base de production** — deux nouveaux champs sur `Game`, un nouveau modèle `RoleDifficulty`, quatre nouveaux champs sur `User`, un nouveau champ sur `PlayerRecord`. Même procédure que pour la Phase 1 : `aws ecs execute-command ... "npx prisma db push --accept-data-loss"` (voir README.md). Additif uniquement — aucune perte de données réelle attendue, mais à vérifier comme d'habitude avant de valider.
-4. Relire `infra/aws/*.tf` : **aucun changement infra n'a été fait pour la Phase 2**, donc un `terraform apply` ne devrait rien montrer de nouveau — mais à confirmer par vous-même avant de taper `yes`, comme toujours.
+1. `git push origin master`.
+2. Test local d'abord : `docker compose down && docker compose up --build`, jouer une partie jusqu'à la fin, voter MVP, vérifier `/profile` (niveau, XP, MVP). Ne pas sauter cette étape — c'est exactement ce genre de test qui a attrapé un vrai bug lors de la Phase 2b (le Dockerfile).
+3. `.\deploy-manual.ps1`.
+4. **Appliquer le nouveau schéma à la base de production** — trois nouveaux champs sur `User` (`totalXp`, `level`, `mvpCount`), deux nouveaux champs sur `PlayerRecord` (`xpEarned`, `isMvp`). Même commande ECS Exec que d'habitude, additive uniquement.
+5. `terraform plan` dans `infra/aws` — aucun changement infra pour cette phase, devrait afficher "No changes." Ne pas `apply` sans relire si ce n'est pas le cas.
+6. Vérifier en prod : jouer une partie, voter MVP, checker `/profile`.
 
 ## Résumé
 
 | Phase | Contenu | Statut |
 |---|---|---|
 | **Phase 1** | Comptes, pseudos de partie, profil, stats minimum, historique des parties | ✅ **Fait — en production** |
-| **Phase 2a** | Stats avancées : séries de victoires, nuits survécues en moyenne, répartition des causes de mort | ✅ **Fait — testé, pas déployé** |
-| **Phase 2b** | Rating générique (Elo-inspiré) + coefficients de difficulté par rôle + Performance Score (v1) + ratings spécialisés | ✅ **Fait — testé, pas déployé** |
-| **Phase 3** (proposée) | XP/Niveaux, MVP | ⬜ À faire |
+| **Phase 2a** | Stats avancées : séries de victoires, nuits survécues en moyenne, répartition des causes de mort | ✅ **Fait — en production** |
+| **Phase 2b** | Rating générique (Elo-inspiré) + coefficients de difficulté par rôle + Performance Score (v1) + ratings spécialisés | ✅ **Fait — en production** |
+| **Phase 3** | XP/Niveaux + MVP (vote post-partie) | ✅ **Fait — testé, pas déployé** |
 | **Phase 4** (proposée) | Badges | ⬜ À faire |
 | **Phase 5** (proposée) | Classements | ⬜ À faire |
 | **Phase 6** (proposée) | Saisons | ⬜ À faire |
 | Transversal | Architecture générique (section 16) | ✅ Respectée à chaque étape livrée |
 
-Le découpage en Phase 3-6 est une proposition de séquencement (chaque phase dépend techniquement de la précédente — les classements ont besoin du rating/XP/MVP, etc.) — pas une contrainte du cahier de charge lui-même, qui ne les ordonne pas explicitement.
+Le découpage en Phase 4-6 est une proposition de séquencement (chaque phase dépend techniquement de la précédente — les classements ont besoin du rating/XP/MVP, etc.) — pas une contrainte du cahier de charge lui-même, qui ne les ordonne pas explicitement.
 
-## Limites respectées pendant le travail autonome (Phase 2, 7 août 2026)
+## Notes sur la Phase 2 (livrée et déployée)
 
-Cette phase a été construite sans supervision utilisateur en direct, avec des limites explicitement posées avant de commencer :
-
-- **Aucun changement infra/AWS, aucun `terraform apply`, aucune modification de la base de production** — uniquement du code, committé et taggé localement sur `master`.
-- **Les commits/tags sont réels et locaux** (le bac à sable où ce travail a eu lieu a un accès disque réel au dépôt) **mais jamais poussés sur GitHub** — aucun identifiant git n'était disponible pour `git push`. Une seule commande à lancer au retour : `git push origin master --follow-tags`.
-- **Le client Prisma ne peut pas être régénéré dans ce bac à sable** (son CDN de binaires est bloqué — même limitation que la Phase 1). Tout code touchant directement Prisma (`persistence.ts`, `applyRating.ts`) a été relu à la main, champ par champ, contre `schema.prisma` — pas de preuve par compilation/exécution réelle sur ces fichiers précis. Le reste (packages/rating, apps/server/src/stats/deriveStats.ts, la page profil) est entièrement vérifié par tests automatisés réels + compilation réelle (159 tests, 3 packages compilés, `tsc --noEmit` propre sur le web).
-- **Chaque choix de conception ambigu est documenté explicitement** ci-dessous (formule de rating, score de performance v1, coefficients de rôle par défaut) — à relire et ajuster librement.
+Phase 2a/2b ont d'abord été construites de façon autonome (session du 7 août 2026, sans supervision utilisateur en direct), avec des limites explicitement posées à l'époque : aucun changement infra/AWS, aucune modification directe de la base de production, tout committé/taggé localement (`phase-1-accounts-live`, `phase-2a-advanced-stats`, `phase-2b-rating-engine`) pour permettre un rollback propre. Un vrai bug a été trouvé et corrigé au premier test local (`docker compose up --build`) : les deux Dockerfiles ne copiaient pas le nouveau `packages/rating`, donc `npm install` tentait (et échouait) de le télécharger depuis le vrai registre npm — corrigé en ajoutant les lignes `COPY` manquantes. Tout le reste s'est déployé sans accroc et a été vérifié en jeu réel.
 
 ---
 
@@ -170,15 +167,21 @@ Les deux exemples du cahier de charge sont vérifiés par des tests dédiés : u
 
 ---
 
-## 11. XP — ⬜ À faire
+## 11. XP — ✅ Fait (Phase 3)
 
-Rien n'existe. Indépendant du rating (le cahier de charge le précise) — peut être livré avant ou après la Phase 2 Rating sans dépendance technique forte. Nécessite : un champ `User.xp`/`User.level`, une règle de calcul de niveau (100 XP/niveau), et des points d'octroi (participation, victoire, MVP — ce dernier dépend de la section 12).
+`User.totalXp`/`level`, calculés par `apps/server/src/progression/deriveProgression.ts` (pur, testé) : +20 XP de participation, +30 de victoire (le cahier de charge donne ces valeurs exactes), +15 de MVP (section 12). Niveau = 1 + XP total / 100, comme demandé ("tous les 100 XP, le joueur gagne un niveau"). Indépendant du rating, comme précisé par le cahier de charge — aucun couplage avec `packages/rating`. La XP de participation/victoire est créditée immédiatement à `GAME_ENDED` ; le bonus MVP est crédité séparément, une fois le vote (section 12) terminé. Affiché sur `/profile` (niveau + barre de progression + XP total).
 
 ---
 
-## 12. MVP — ⬜ À faire
+## 12. MVP — ✅ Fait (Phase 3)
 
-Rien n'existe. Nécessite un mécanisme de vote en fin de partie (nouvel écran/étape après `ENDED`), stocké quelque part (nouveau champ sur `PlayerRecord`, ou table dédiée `MvpVote`), et un compteur agrégé affiché sur le profil.
+Vote post-partie implémenté entièrement côté `apps/server` (aucun changement au moteur de jeu — le vote MVP n'est pas une mécanique de jeu, section 16 respectée). Trois décisions produit confirmées explicitement avec l'utilisateur avant l'implémentation :
+
+- **Pas d'auto-vote** : un joueur ne peut pas voter pour lui-même (rejeté côté serveur).
+- **Pas de délai fixe** : le vote attend que tous les joueurs de la partie aient voté. Filet de sécurité ajouté (cohérent avec le reste de l'app, ex. `ADMIN_FORCE_NEXT_PHASE`) : un admin peut forcer le résultat à tout moment via `ADMIN_FORCE_MVP_FINALIZE`, pour le cas d'un joueur déconnecté qui ne revient jamais voter.
+- **Égalité → tout le monde gagne** : `tallyMvpVotes()` (pur, testé) retourne tous les joueurs à égalité au nombre de votes maximum ; chacun reçoit +1 MVP et +15 XP.
+
+Vote à bulletin secret : seule la progression (nombre de votes reçus, jamais pour qui) est diffusée avant la fin — `MVP_STATE`. Le résultat final (`MVP_RESULT`) diffuse les gagnants. `PlayerRecord.isMvp` + `User.mvpCount` mis à jour par `applyMvpBonus()` (`apps/server/src/progression/applyProgression.ts`), résolu via les lignes `PlayerRecord` déjà écrites par `finalizeGameHistory` plutôt que via la map en mémoire de `gameRegistry` (qui peut déjà avoir été nettoyée si le vote prend du temps). Affiché sur l'écran de fin de partie (bouton de vote, puis résultat avec médaille 🏅) et sur `/profile` (compteur de MVP).
 
 ---
 
@@ -215,20 +218,21 @@ Contrainte transversale, vérifiée à chaque étape livrée jusqu'ici :
 
 ## Recommandation pour la suite
 
-Fait (Phase 2a + 2b, 7 août 2026, testé et committé, pas encore déployé — voir l'avertissement en haut du document) :
+Fait (Phases 1, 2a, 2b — en production ; Phase 3 — testée, pas encore déployée) :
 
 1. ~~Compléter les statistiques restantes de la section 4~~ ✅
 2. ~~Coefficients de difficulté par rôle (section 7)~~ ✅
 3. ~~Performance Score par rôle (section 8)~~ 🚧 v1 générique seulement — voir la limite honnête documentée dans cette section
 4. ~~Rating générique + calcul final (sections 6 et 9)~~ ✅
 5. ~~Ratings spécialisés (section 10)~~ ✅
+6. ~~XP + Niveau (section 11)~~ ✅
+7. ~~MVP (section 12)~~ ✅
 
 Reste à faire, par ordre de dépendance :
 
-1. **Journal d'événements structuré côté moteur** — pas fait, et c'est ce qui bloque un vrai Performance Score par rôle (section 8) au-delà de la formule générique actuelle. Recommandé avant d'aller plus loin sur les scores de performance, mais pas bloquant pour XP/MVP/Badges/Classements/Saisons ci-dessous.
-2. **XP + MVP** (sections 11-12) — aucune dépendance forte sur le reste, peuvent démarrer n'importe quand.
-3. **Badges** (section 13) — dépend de presque tout ce qui précède selon les badges choisis (certains badges ne dépendent que du rating/historique déjà en place, d'autres attendront MVP/XP).
-4. **Classements** (section 14) — le classement "par victoires" est faisable dès aujourd'hui avec les données déjà en base ; les autres classements attendent XP/MVP.
-5. **Saisons** (section 15) — en dernier, dépend du rating (rien à réinitialiser sans lui).
+1. **Journal d'événements structuré côté moteur** — pas fait, et c'est ce qui bloque un vrai Performance Score par rôle (section 8) au-delà de la formule générique actuelle. Recommandé avant d'aller plus loin sur les scores de performance, mais pas bloquant pour Badges/Classements/Saisons ci-dessous.
+2. **Badges** (section 13) — tout ce dont ça a besoin existe maintenant (rating, historique, XP, MVP) ; dépend juste de quels badges précis on veut définir en premier.
+3. **Classements** (section 14) — toutes les données nécessaires existent déjà (rating, victoires, XP, MVP) ; c'est la première section où absolument rien ne bloque plus.
+4. **Saisons** (section 15) — en dernier, dépend du rating (rien à réinitialiser sans lui).
 
-À confirmer avec l'utilisateur avant de démarrer une nouvelle phase autonome : quelle brique de cette liste devient la prochaine "Phase 3" à scope précisément, et si les choix v1 documentés ci-dessus (formule de rating, coefficients par défaut, Performance Score générique) doivent être ajustés avant d'aller plus loin.
+À confirmer avec l'utilisateur avant de démarrer la prochaine phase : Badges ou Classements en premier, et si les choix v1 documentés ci-dessus (formule de rating, coefficients par défaut, Performance Score générique) doivent être ajustés avant d'aller plus loin.

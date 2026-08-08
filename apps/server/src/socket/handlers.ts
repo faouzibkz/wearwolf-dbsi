@@ -17,6 +17,9 @@ import {
   type DayVoteCastPayload,
   type LoupVertGuessSubmitPayload,
   type LoupVertStolenPowerSubmitPayload,
+  type MvpResultPayload,
+  type MvpStatePayload,
+  type MvpVoteCastPayload,
   type NightActionSubmitPayload,
   type PlayerJoinPayload,
   type PlayerReconnectPayload,
@@ -25,6 +28,8 @@ import {
 import { gameRegistry } from "../gameRegistry.js";
 import { listPresets, savePreset, finalizeGameHistory } from "../db/persistence.js";
 import { applyRatingUpdates } from "../rating/applyRating.js";
+import { applyBaseProgression, applyMvpBonus } from "../progression/applyProgression.js";
+import { mvpVotingRegistry } from "../mvp/mvpVotingRegistry.js";
 import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage } from "./wolfRoom.js";
@@ -48,22 +53,67 @@ function sync(io: Server, engine: import("@loupgarou/game-engine").GameEngine): 
     io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
       stats: engine.getEndGameStats(),
     });
+
+    // Opens the post-game MVP vote (section 12) right away, independent of
+    // everything below — every player who was in the game is eligible to
+    // vote (and be voted for). No fixed deadline: it finalizes naturally
+    // once everyone's voted (see MVP_VOTE_CAST below), or an admin can
+    // force it via ADMIN_FORCE_MVP_FINALIZE. See mvp/mvpVotingRegistry.ts.
+    const playerIds = engine.getPlayers().map((p) => p.id);
+    mvpVotingRegistry.open(engine.getCode(), playerIds);
+    const initialMvpState = buildMvpStatePayload(engine.getCode());
+    if (initialMvpState) {
+      io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.MVP_STATE, initialMvpState);
+    }
+
     // Turns this finished game into durable per-account history/stats (see
     // db/persistence.ts's finalizeGameHistory doc comment). Fire-and-forget:
     // best-effort like every other DB write here, must never block or
     // delay the GAME_ENDED experience for the people at the table.
     //
-    // applyRatingUpdates runs AFTER finalizeGameHistory resolves, not in
-    // parallel with it — it updates PlayerRecord.ratingDelta on the exact
-    // rows finalizeGameHistory just upserted, so those rows have to exist
-    // first. gameRegistry's userId map is only cleared once both are done,
-    // since applyRatingUpdates needs it too.
-    const playerIds = engine.getPlayers().map((p) => p.id);
+    // applyRatingUpdates and applyBaseProgression both run AFTER
+    // finalizeGameHistory resolves, not in parallel with it — they update
+    // columns on the exact PlayerRecord rows finalizeGameHistory just
+    // upserted, so those rows have to exist first. They run in parallel
+    // with EACH OTHER, though: neither touches a column the other writes.
+    // gameRegistry's userId map is only cleared once all three are done.
     const getUserId = (playerId: string) => gameRegistry.getPlayerUserId(playerId);
     void finalizeGameHistory(engine, getUserId)
-      .then(() => applyRatingUpdates(engine, getUserId))
+      .then(() => Promise.all([applyRatingUpdates(engine, getUserId), applyBaseProgression(engine, getUserId)]))
       .then(() => gameRegistry.clearPlayerUserIds(playerIds));
   }
+}
+
+/** Null if MVP voting was never opened for this game (shouldn't happen once GAME_ENDED has fired, but never worth throwing over). */
+function buildMvpStatePayload(gameCode: string): MvpStatePayload | null {
+  const state = mvpVotingRegistry.getState(gameCode);
+  if (!state) return null;
+  return {
+    votesCast: state.votes.size,
+    totalEligible: state.eligiblePlayerIds.size,
+    votedPlayerIds: [...state.votes.keys()],
+    finalized: state.finalized,
+  };
+}
+
+/**
+ * Shared by both the natural "everyone's voted" path and
+ * ADMIN_FORCE_MVP_FINALIZE. Idempotent (mvpVotingRegistry.finalize() is),
+ * so a stray double-call (e.g. the last vote lands right as an admin also
+ * clicks force-finalize) can't produce two different results.
+ */
+function finalizeMvpVoting(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
+  const code = engine.getCode();
+  const result = mvpVotingRegistry.finalize(code);
+  const winners = result.winners.map((playerId) => {
+    const player = engine.getPlayers().find((p) => p.id === playerId);
+    return { playerId, nickname: player?.nickname ?? "?" };
+  });
+  const payload: MvpResultPayload = { winners };
+  io.to(roomForGame(code)).emit(SOCKET_EVENTS.MVP_RESULT, payload);
+  // Best-effort, same contract as every other post-game DB write — awards
+  // the MVP bonus XP/mvpCount, then frees this game's in-memory vote state.
+  void applyMvpBonus(code, result.winners).then(() => mvpVotingRegistry.clear(code));
 }
 
 /** Shared by ADMIN_FORCE_NEXT_PHASE and CHEF_FORCE_NEXT_PHASE — same effect, different permission check. */
@@ -645,6 +695,37 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
         relayWolfChatMessage(io, engine, playerId, payload.message);
+      }, ack);
+    });
+
+    // -----------------------------------------------------------------
+    // Post-game MVP vote (section 12) — opened automatically in sync()
+    // above, the moment GAME_ENDED fires.
+    // -----------------------------------------------------------------
+
+    socket.on(SOCKET_EVENTS.MVP_VOTE_CAST, (payload: MvpVoteCastPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const voterId = socket.data.playerId;
+        if (!voterId) throw new Error("Seul un joueur ayant participé à la partie peut voter.");
+        mvpVotingRegistry.castVote(engine.getCode(), voterId, payload.votedForId);
+
+        const state = buildMvpStatePayload(engine.getCode());
+        if (state) io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.MVP_STATE, state);
+
+        if (mvpVotingRegistry.isComplete(engine.getCode())) {
+          finalizeMvpVoting(io, engine);
+        }
+      }, ack);
+    });
+
+    // Safety valve for a straggler who never comes back to vote — same
+    // idea as ADMIN_FORCE_NEXT_PHASE, since this vote otherwise has no
+    // fixed deadline by design.
+    socket.on(SOCKET_EVENTS.ADMIN_FORCE_MVP_FINALIZE, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireAdminGame(socket);
+        finalizeMvpVoting(io, engine);
       }, ack);
     });
   });
