@@ -4,7 +4,7 @@
 >
 > À lire avec **[FEATURES.md](./FEATURES.md)** (suivi fait/à faire du cahier de charge) et **[README.md](./README.md)** (guide pratique : lancer en local, déployer, dépanner).
 >
-> Dernière mise à jour : 7 août 2026.
+> Dernière mise à jour : 8 août 2026 (cahier de charge #2 §17.1-17.4 complet).
 
 ---
 
@@ -79,9 +79,9 @@ Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_
 
 ### 3.4 Tests
 
-127 tests automatisés (`packages/game-engine/src/__tests__/*.test.ts`, 22 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, et `finalPlayerSummaries.test.ts` pour la Phase 1.
+164 tests automatisés dans `packages/game-engine/src/__tests__/*.test.ts` (25 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, `finalPlayerSummaries.test.ts`, la nuit séquentielle (§17.1, `sequentialNight.test.ts`), l'Afterlife (§17.3, `afterlife.test.ts`), et le journal d'événements (§17.4a, `eventLog.test.ts`).
 
-Depuis la Phase 2 : +19 tests dans `packages/rating` (rating, performance, coefficients — §3.5) et +13 dans `apps/server/src/stats/deriveStats.test.ts` (§4.3). Depuis la Phase 3 (§3.6) : +8 dans `progression/deriveProgression.test.ts`, +4 dans `mvp/tallyMvpVotes.test.ts`, +9 dans `mvp/mvpVotingRegistry.test.ts` — **180 tests au total**, tous exécutés réellement, tous passants.
+Depuis la Phase 2 : +37 tests dans `packages/rating` (rating, performance v2, coefficients — §3.5). Depuis la Phase 3 : +8 dans `progression/deriveProgression.test.ts`, +4 dans `mvp/tallyMvpVotes.test.ts`, +9 dans `mvp/mvpVotingRegistry.test.ts`. Depuis le cahier de charge #2 : `apps/server` compte au total 85 tests (§17.1d `broadcast.test.ts`/§43 `timerOrdering.test.ts`, §17.3b `afterlife.test.ts`, §17.4c `badges/*.test.ts`, §17.4e `leaderboard.test.ts`, en plus des tests Phase 2a/3 déjà cités) — **286 tests au total** (164 + 37 + 85), tous exécutés réellement, tous passants.
 
 ---
 
@@ -90,7 +90,7 @@ Depuis la Phase 2 : +19 tests dans `packages/rating` (rating, performance, coeff
 Package isolé, **sans dépendance à Prisma ni au moteur de jeu**, sur le même modèle que `packages/game-engine` : que des fonctions pures, entièrement testées (19 tests). C'est délibéré — c'est la seule façon de garder la logique de rating testable dans un environnement où le client Prisma généré n'est pas toujours disponible (voir §9).
 
 - `roleDifficulty.ts` — coefficients par rôle (section 7), config seule, jamais lue par un `switch(roleId)`.
-- `performance.ts` — `PERFORMANCE_SCORERS`, un registre par rôle **sur le même modèle que `ROLE_REGISTRY`** du moteur de jeu : une formule générique par défaut (`genericPerformanceScore`), remplaçable rôle par rôle sans toucher au reste. Aujourd'hui, **aucun rôle n'a de formule spécifique** — voir FEATURES.md section 8 pour la limite honnête (pas de journal d'événements structuré côté moteur encore).
+- `performance.ts` — `PERFORMANCE_SCORERS`, un registre par rôle **sur le même modèle que `ROLE_REGISTRY`** du moteur de jeu : une formule générique par défaut (`genericPerformanceScore`), remplaçable rôle par rôle sans toucher au reste. Depuis §17.4b, 9 rôles ont une vraie formule (Voyante, Salvateur, Sorcière, Alien, Loup Garou/Blanc/Vert, Chasseur, Barbie, Corbeau), chacune lisant `PerformanceContext.events`/`fullEventLog` — voir §3.7 pour le journal d'événements dont ça dépend. Villageois/Mowgli utilisent toujours la formule générique, à raison (aucune action à noter pour eux).
 - `rating.ts` — `computeRatingDelta()`, la formule Elo-inspirée (section 9) ; `specializedScopeForTeam()` pour les ratings Village/Loups/Solo (section 10).
 
 `apps/server/src/rating/applyRating.ts` est la seule couche qui touche Prisma : elle récupère les lignes nécessaires (utilisateurs liés, coefficients configurés), appelle les fonctions pures de `packages/rating`, et persiste le résultat. Appelée depuis `socket/handlers.ts`'s `sync()`, **après** `finalizeGameHistory()` (elle met à jour `PlayerRecord.ratingDelta` sur les lignes que `finalizeGameHistory` vient de créer — l'ordre compte).
@@ -107,6 +107,22 @@ Contrairement au rating, ceci n'a pas de package dédié — c'est assez petit p
 - `progression/applyProgression.ts` — la seule couche qui touche Prisma. `applyBaseProgression()` tourne à `GAME_ENDED`, comme `applyRatingUpdates`. `applyMvpBonus()` tourne séparément, une fois le vote MVP terminé — potentiellement bien après `GAME_ENDED`, donc il résout le compte de chaque gagnant via la ligne `PlayerRecord` déjà écrite par `finalizeGameHistory` plutôt que via `gameRegistry.userIdByPlayerId`, qui peut déjà avoir été vidé à ce moment-là.
 
 Le vote MVP lui-même s'ouvre automatiquement dans `socket/handlers.ts`'s `sync()` dès que `GAME_ENDED` part, et se termine soit naturellement (tous les joueurs de la partie ont voté), soit via `ADMIN_FORCE_MVP_FINALIZE` (filet de sécurité pour un joueur déconnecté qui ne revient jamais voter — même logique que `ADMIN_FORCE_NEXT_PHASE` ailleurs dans l'app). Vote à bulletin secret : `MVP_STATE` ne diffuse jamais qui a voté pour qui, seulement la progression.
+
+---
+
+## 3.7 Journal d'événements, Badges, Classements (cahier de charge #2 §17.4)
+
+**Le journal d'événements** (`GameEvent`, `packages/shared/src/gameEvents.ts`) est le prérequis technique de tout §17.4 : une union discriminée append-only (`GameInternalState.eventLog`, écrite via `EngineContext.recordEvent()` — même schéma que `ctx.log()`) qui capture chaque action à résultat connu (inspection de la Voyante, protection du Salvateur, potion de la Sorcière, tentative d'attaque des loups, tir du Chasseur, révélation de Barbie, devinette de l'Alien/du Loup Vert, chaque vote de jour et l'élimination qui en résulte, transformation de Mowgli).
+
+**Pourquoi `GameEvent` vit dans `packages/shared` et pas `packages/game-engine`** : `packages/rating` doit pouvoir lire cette forme sans dépendre du moteur de jeu — exactement la même raison que `FinalPlayerSummary` vit déjà dans `shared` plutôt que dans `game-engine`. Un fichier `game-engine/src/events.ts` d'une seule ligne (`export type { GameEvent } from "@loupgarou/shared"`) reste en place pour que le code interne du moteur n'ait rien eu à changer.
+
+**Où chaque événement est enregistré** — deux familles selon le moment où l'issue finale est connue :
+- Dans `NightResolver.resolveNight()`, une fois par nuit, juste après `processDeaths` : tout ce qui dépend de la résolution complète (est-ce que la protection a sauvé la cible des loups ? est-ce que le poison a tué un loup ?) — impossible à savoir au moment de la soumission de l'action elle-même.
+- Directement dans le module concerné (`roles/alien.ts`, `engine/LoupVert.ts`, `GameEngine.submitChasseurShot`, `engine/Barbie.ts`, `engine/VoteManager.ts`, `engine/DeathQueue.ts` pour Mowgli) quand le résultat est connu immédiatement.
+
+**Badges** (`apps/server/src/badges/`) : `BADGE_REGISTRY` (`deriveBadges.ts`) est un registre en **code**, pas une table DB — même principe que `PERFORMANCE_SCORERS`/`ROLE_REGISTRY` : ajouter un badge est une entrée de tableau, jamais une migration. `deriveBadgeContribution.ts` (pur) traduit le journal d'un joueur pour UNE partie en compteurs persistés sur `PlayerRecord` (ex. `voyanteWolvesFound`) ; `applyBadges.ts` (glue Prisma) les SUM sur tout l'historique du compte et compare au registre — idempotent, ne fait jamais que des `INSERT`, jamais de suppression (un badge est permanent). Réévalué après chaque partie ET après la finalisation du vote MVP (`mvpCount` n'est mis à jour qu'à ce moment-là, bien après `GAME_ENDED`).
+
+**Classements** (`getLeaderboard()`, `db/persistence.ts`) : confirment la prédiction de FEATURES.md section 14 — aucune donnée manquante. Rating/XP/MVP sont un simple tri sur une colonne `User` déjà tenue à jour ; seul "victoires" demande un vrai agrégat (`groupBy` sur `PlayerRecord`). `GET /api/leaderboard` et `GET /api/profile/:username` (comparaison de profils, §17.4f) sont volontairement **publics** (pas de `requireSession`) — contrairement à `/profile/me`/`/badges/me`/`/history/me` — parce qu'un classement ou un profil comparé n'est pas une donnée privée.
 
 ---
 
@@ -141,7 +157,10 @@ Trois responsabilités, toutes **best-effort** (une panne DB ne doit jamais plan
 - `POST /api/auth/signup` — username (3-20 car., unique) + mot de passe (8+ car.) + email optionnel. `displayName` = `username` par défaut.
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
 - `GET /api/profile/me` — identité + stats agrégées (section 3+4 du cahier de charge, en un seul appel).
+- `GET /api/profile/:username` — même forme que `/profile/me`, mais **public** (comparaison de profils, §17.4f).
 - `GET /api/history/me?limit=&offset=` — historique paginé (section 5).
+- `GET /api/badges/me` — badges débloqués/à débloquer (§17.4c).
+- `GET /api/leaderboard?category=&limit=` — **public** (§17.4e).
 
 ### 4.5 Schéma Prisma (`prisma/schema.prisma`)
 
@@ -152,13 +171,19 @@ Game            — une partie (code, phase, config, snapshot d'état, gagnant, 
                    snapshot pris une seule fois à ENDED).
 PlayerRecord     — une ligne = un joueur dans une partie donnée : nickname (pseudo temporaire, JAMAIS utilisé pour les stats),
                    roleId, team, result, deathCause, deathMoment, ratingDelta (Phase 2b, informationnel),
-                   userId (nullable, SetNull si le compte est supprimé).
+                   userId (nullable, SetNull si le compte est supprimé), + contribution de CETTE partie aux totaux de
+                   carrière des badges (§17.4c — voyanteWolvesFound, salvateurSuccessfulProtects, ..., wasSoleSurvivor).
                    @@unique([gameId, enginePlayerId]) → upsert idempotent.
 GameLogEntry    — journal texte d'une partie (debug/admin).
 Preset          — configurations de partie sauvegardées par l'admin.
 RoleDifficulty  — coefficients de difficulté par rôle (Phase 2b, section 7), réglables à l'exécution sans redéploiement ;
                    seedé au démarrage du serveur depuis packages/rating's DEFAULT_ROLE_DIFFICULTY.
+UserBadge       — quels badges un compte a débloqués, et quand (§17.4c). La définition des badges (nom/description/
+                   condition) vit en CODE (badges/deriveBadges.ts's BADGE_REGISTRY), jamais ici — badgeId est une
+                   simple string, pas une clé étrangère vers une table de définitions qui n'existe pas.
 ```
+
+**⚠️ Migration en attente** : `UserBadge` et les nouvelles colonnes `PlayerRecord` ci-dessus ont été ajoutées à `schema.prisma` mais **pas encore poussées vers une base réelle** (sandbox sans accès réseau pour le client Prisma généré — voir §9). Lancer `npx prisma db push` avant le prochain redémarrage du serveur.
 
 Note importante : **le schéma Prisma n'accepte que les commentaires `//`/`///`**, pas `/* */` — une vraie erreur de build a été introduite puis corrigée pendant cette session (voir §8, Pièges connus).
 
@@ -238,6 +263,9 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 | Ajouter un champ au profil/historique | `apps/server/prisma/schema.prisma` → `apps/server/src/db/persistence.ts` → `apps/server/src/http/accountRoutes.ts` → page Next.js correspondante |
 | Ajouter/ajuster une statistique dérivée | `apps/server/src/stats/deriveStats.ts` (calculs purs, testés) → `apps/server/src/db/persistence.ts` (glue Prisma) → `apps/web/src/app/profile/page.tsx` |
 | Ajuster la formule de rating / performance / coefficients de rôle | `packages/rating/src/*.ts` (tout est pur et testé ici) — jamais dans `apps/server/src/rating/applyRating.ts`, qui ne fait que la glue Prisma |
-| Ajouter une vraie formule de performance par rôle | `packages/rating/src/performance.ts`'s `PERFORMANCE_SCORERS` — nécessite d'abord un journal d'événements structuré côté moteur, voir FEATURES.md section 8 |
+| Ajouter/ajuster une vraie formule de performance par rôle | `packages/rating/src/performance.ts`'s `PERFORMANCE_SCORERS` — lit `GameEvent[]` (§3.7), déjà rempli pour 9 rôles |
+| Ajouter un nouveau type d'événement au journal | `packages/shared/src/gameEvents.ts`'s `GameEvent` union, puis `ctx.recordEvent(...)` au bon endroit côté moteur — voir §3.7 |
+| Ajouter un nouveau badge | `apps/server/src/badges/deriveBadges.ts`'s `BADGE_REGISTRY` — une entrée, jamais de migration (§3.7) |
+| Ajouter une catégorie de classement | `apps/server/src/db/persistence.ts`'s `getLeaderboard()`/`LEADERBOARD_CATEGORIES` (§3.7) |
 | Modifier l'infra AWS | `infra/aws/*.tf` — **toujours relire le plan avant d'approuver** |
 | Comprendre le cahier de charge original et ce qu'il reste à faire | `FEATURES.md` |

@@ -26,9 +26,9 @@ Détail complet dans `ARCHITECTURE.md` §9 « Pièges connus ».
 | **Phase 2b** | Rating générique (Elo-inspiré) + coefficients de difficulté par rôle + Performance Score (v1) + ratings spécialisés | ✅ **Fait — en production** |
 | **Phase 3** | XP/Niveaux + MVP (vote post-partie) | ✅ **Fait — testé, déployé le 8 août 2026** |
 | **Phase 4** (cahier de charge #2 — voir section 17) | Nuit séquentielle (§17.1) + présentation (§17.2) + spectateur/Afterlife (§17.3) | ✅ **Fait — testé localement (211 tests), non déployé en prod** |
-| **Phase 5** (cahier de charge #2 — voir section 17) | Performance Score par rôle (v2, avec journal d'événements) | ⬜ À faire |
-| **Phase 6** (cahier de charge #2 — voir section 17) | Badges + Achievements | ⬜ À faire |
-| **Phase 7** (cahier de charge #2 — voir section 17) | Classements + comparaison de profils | ⬜ À faire |
+| **Phase 5** (cahier de charge #2 — voir section 17) | Performance Score par rôle (v2, avec journal d'événements) | ✅ **Fait — testé localement, non déployé en prod** |
+| **Phase 6** (cahier de charge #2 — voir section 17) | Badges + Achievements | ✅ **Fait — testé localement, non déployé en prod** |
+| **Phase 7** (cahier de charge #2 — voir section 17) | Classements + comparaison de profils | ✅ **Fait — testé localement, non déployé en prod** |
 | **Phase 8** (proposée, cahier de charge #1) | Saisons | ⬜ À faire |
 | Transversal | Architecture générique (section 16) | ✅ Respectée à chaque étape livrée |
 
@@ -138,13 +138,13 @@ Nouveau modèle `RoleDifficulty { roleId, coefficient }` en base — **configura
 
 ---
 
-## 8. Performance Score — 🚧 Partiel (v1 honnête, limité par l'absence de journal d'événements)
+## 8. Performance Score — ✅ Fait (v2, avec journal d'événements — voir §17.4a/b)
 
-Implémenté comme un **registre par rôle** (`packages/rating/src/performance.ts`, `PERFORMANCE_SCORERS`), exactement le mécanisme d'extensibilité demandé ("permettre de créer un calcul personnalisé pour chaque rôle") — un test dédié démontre l'enregistrement d'une formule personnalisée pour un rôle donné, prenant le pas sur la formule générique.
+Le "prérequis manquant" identifié dans la v1 est maintenant construit : `packages/game-engine` tient un journal structuré (`GameEvent[]`, `packages/shared/src/gameEvents.ts`, exposé via `GameEngine.getEventLog()`/`getPlayerEvents()`) de chaque action à outcome connu — inspections de la Voyante (avec résultat), protections du Salvateur (a sauvé ou non), potions de la Sorcière (a sauvé / a tué un loup), tirs de vengeance du Chasseur, révélations de Barbie, devinettes de l'Alien et du Loup Vert, tentatives d'attaque des loups, chaque vote de jour individuellement, et les éliminations qui en résultent.
 
-**Limite honnête, à ne pas ignorer** : `packages/game-engine` ne conserve aujourd'hui aucun journal structuré des actions de chaque joueur (qui a inspecté qui, quelle potion a été utilisée et quand, etc.) — exactement le "prérequis manquant" déjà identifié avant cette phase. **Sans cette donnée, aucune formule vraiment spécifique par rôle (inspections utiles de la Voyante, potions de la Sorcière, discrétion du Loup) n'est calculable honnêtement.** Le registre `PERFORMANCE_SCORERS` est donc vide aujourd'hui — tous les rôles utilisent la même formule générique (`genericPerformanceScore`) : profondeur de survie + résultat de la partie, avec une pondération différente pour les rôles solo (l'Alien) puisqu'un rôle solo "perd" presque toujours au sens équipe, quelle que soit la qualité de son jeu. C'est un vrai score, dérivé de vraies données, mais ce n'est PAS ce que section 8 décrit en détail (inspections utiles, potion offensive utile, etc.) — ces formules-là attendent le journal d'événements.
+`PERFORMANCE_SCORERS` (`packages/rating/src/performance.ts`) n'est plus vide : Voyante, Salvateur, Sorcière, Alien, Loup Garou/Loup Blanc (collectif — le vote de meute n'a pas de dissidence individuelle trackée), Loup Vert, Chasseur, Barbie et Corbeau ont chacun une vraie formule, chacune blendant le score générique (survie + résultat) avec un ratio d'"utilité" spécifique au rôle (ex. Voyante : fraction d'inspections ayant trouvé un loup ; Sorcière : soin toujours utile + poison ayant tué un loup, sur le nombre de potions utilisées). Villageois/Mowgli n'ont pas d'action à noter et utilisent toujours la formule générique — c'est correct pour eux, pas une lacune.
 
-**Prochaine étape recommandée avant d'aller plus loin sur cette section** : faire exposer par le moteur de jeu un journal structuré des actions par joueur (qui a été inspecté par la Voyante et quand, qui a reçu quelle potion, qui a voté pour qui à chaque tour...), puis remplir `PERFORMANCE_SCORERS` rôle par rôle. L'architecture (registre générique, fallback neutre) est déjà prête à recevoir ça sans rien changer ailleurs.
+25 tests dédiés (`performance.test.ts`), plus 16 tests côté moteur (`eventLog.test.ts`) qui vérifient l'enregistrement de chaque type d'événement.
 
 ---
 
@@ -185,15 +185,17 @@ Vote à bulletin secret : seule la progression (nombre de votes reçus, jamais p
 
 ---
 
-## 13. Badges — ⬜ À faire
+## 13. Badges — ✅ Fait (voir §17.4c)
 
-Rien n'existe. Exigence explicite : facile d'ajouter de nouveaux badges. Approche cohérente avec l'architecture générique déjà en place : une table `BadgeDefinition { id, condition/seuil }` + une table `UserBadge { userId, badgeId, unlockedAt }`, évaluée après chaque `finalizeGameHistory()` plutôt que des règles codées en dur par badge.
+Implémenté avec le registre en **code**, pas en table DB, contrairement à ce que cette section envisageait initialement : `BADGE_REGISTRY` (`apps/server/src/badges/deriveBadges.ts`) tient la métadonnée de chaque badge (nom, description, secret, condition) — exactement le même principe que `PERFORMANCE_SCORERS`/`ROLE_REGISTRY` (section 16) : ajouter un badge est une entrée de tableau + un redéploiement, jamais une migration. Seule la table `UserBadge { userId, badgeId, unlockedAt }` existe côté DB — elle ne stocke que QUELS badges sont débloqués, jamais leur définition.
+
+18 badges livrés (liste proposée et approuvée explicitement par l'utilisateur avant implémentation) : 3 de participation, 3 de résultats, 8 de maîtrise par rôle (utilisant le journal d'événements §17.4a), 2 de progression/social, et 2 secrets (cachés jusqu'au déblocage). Réévalués après chaque partie terminée (`applyBadgesForUser`, appelé après `finalizeGameHistory`/`applyRatingUpdates`/`applyBaseProgression`) et à nouveau à la finalisation du vote MVP (`applyBadgesForMvpWinners`, car `mvpCount` n'est mis à jour qu'à ce moment-là). Exposés via `GET /api/badges/me`, affichés sur `/achievements`.
 
 ---
 
-## 14. Classements — ⬜ À faire
+## 14. Classements — ✅ Fait (voir §17.4e)
 
-Rien n'existe. Dépend du Rating (section 6) pour les classements par rating, et de XP/MVP pour les classements correspondants — seul le classement "par nombre de victoires" pourrait être construit dès aujourd'hui avec les données déjà en base.
+7 catégories (`getLeaderboard()`, `apps/server/src/db/persistence.ts`) : rating global/Village/Loups/Solo, XP, MVP (tri direct sur une colonne `User` déjà maintenue), et victoires (le seul vrai agrégat — `groupBy` sur `PlayerRecord.result = "WON"` par compte, en excluant les invités non liés à un compte). Exposé publiquement via `GET /api/leaderboard?category=&limit=` (pas d'authentification requise — un classement est fait pour être vu par tous), affiché sur `/leaderboard`.
 
 ---
 
@@ -218,7 +220,7 @@ Contrainte transversale, vérifiée à chaque étape livrée jusqu'ici :
 
 ## 17. Cahier de charge #2 (reçu le 8 août 2026) — Expérience de jeu & progression sociale
 
-> **Statut au 8 août 2026 (fin de session autonome) : 17.1, 17.2 et 17.3 livrés, testés, committés localement (voir « Notes d'implémentation » plus bas). 17.4 (Performance v2 / Badges / Classements) reste à faire.**
+> **Statut au 8 août 2026 (fin de session autonome) : 17.1, 17.2, 17.3 ET 17.4 livrés, testés, committés localement (voir « Notes d'implémentation » plus bas). Le cahier de charge #2 est entièrement complet — reste uniquement le `prisma db push` + test Docker local + déploiement, à faire par l'utilisateur.**
 
 > Document séparé du cahier de charge #1 ci-dessus, volontairement scopé pour ne **rien changer aux règles/mécaniques des rôles existants** — uniquement l'orchestration de la nuit, la présentation, et une couche progression/social entièrement nouvelle. Six features, groupées en 4 phases ci-dessous par dépendance technique réelle (pas forcément l'ordre de la liste d'origine).
 
@@ -265,9 +267,9 @@ Couche purement présentation une fois 17.1 en place : transitions (« 🌙 La n
 **Déjà vérifié** : `PlayerPublic`/`InternalPlayer` ont un champ `isSpectator: boolean` (`packages/shared`, `packages/game-engine`) — mais il est mis à `false` à la création du joueur et **n'est jamais réécrit ailleurs dans tout `game-engine`**. Un champ prévu mais jamais branché à ce jour, donc aucun risque de conflit : le réutiliser pour « joueur mort » (plutôt que d'en créer un distinct) est sûr et n'affecte aucun comportement existant, puisque rien ne le lit ni ne le modifie actuellement.
 Le blocage serveur des actions d'un mort existe déjà (`submitNightAction` rejette `!player.isAlive`) — ce qui manque, c'est la présentation (écran « Vous êtes mort → Mode spectateur ») et le chat privé lui-même. Le chat des morts (« Afterlife ») peut être construit exactement comme `WolfChat` existant (`relayWolfChatMessage`, salle dédiée, vérification côté serveur de l'éligibilité) — un pattern déjà en place et éprouvé, juste appliqué à « est mort » plutôt qu'« est loup ».
 
-### 17.4 Performance Score v2, Badges, Classements (point 9-14) — indépendant de 17.1-17.3, peut être fait en parallèle ou avant
+### 17.4 Performance Score v2, Badges, Classements (point 9-14) — indépendant de 17.1-17.3 — ✅ Fait
 
-Voir sections 8, 13, 14 ci-dessus — rien de nouveau ici par rapport à ce qui était déjà planifié, ce document ne fait que le confirmer et le détailler (catégories de classement, format de la page achievements, badges secrets). Le seul vrai prérequis technique (journal d'événements structuré) reste à construire, indépendamment de la nuit séquentielle.
+Voir sections 8, 13, 14 ci-dessus. Livré en 6 étapes indépendantes (17.4a → 17.4f), chacune committée séparément — voir « Notes d'implémentation » plus bas pour le détail. La liste des 18 badges (17.4c) a été proposée par Claude puis explicitement approuvée par l'utilisateur avant l'implémentation, comme convenu.
 
 ### Ordre recommandé
 
@@ -295,7 +297,20 @@ Suite au feu vert de l'utilisateur (« admin toggle » pour le mode de nuit, « 
 
 **Vérifications effectuées à chaque étape** : `tsc --noEmit` (shared + game-engine + server + web), `next build` (web), suite de tests complète du monorepo (**211/211 tests verts** à la fin de 17.3 — 0 régression sur les 130 tests pré-existants). Pas de `docker compose up --build` réel (sandbox sans Docker ni accès réseau pour générer le client Prisma) — l'utilisateur doit encore faire ce test avant tout déploiement, comme prévu dès le départ. Aucun push git (pas d'identifiants dans ce sandbox) — tout est committé localement sur `master`, prêt à être poussé et/ou testé en Docker par l'utilisateur.
 
-**Reste à faire pour clore le cahier de charge #2** : 17.4 (Performance Score v2 → Badges → Classements) — non commencé lors de cette session.
+### Notes d'implémentation — session autonome du 8 août 2026 (17.4 livré, cahier de charge #2 clos)
+
+Suite au feu vert explicite de l'utilisateur (« full send », avec un seul point d'arrêt convenu : approbation de la liste de badges avant le câblage de 17.4c), les six étapes ont été construites, testées et committées localement, un commit indépendant par étape :
+
+- **17.4a** — Journal d'événements structuré : `GameEvent` (union discriminée, `packages/shared/src/gameEvents.ts` — déplacé depuis `packages/game-engine` en 17.4b pour que `packages/rating` puisse le lire sans dépendre du moteur, exactement comme `FinalPlayerSummary`) + `EngineContext.recordEvent()` + `GameInternalState.eventLog`. Enregistré au bon endroit selon quand l'issue finale est connue : dans `NightResolver.resolveNight()` pour tout ce qui dépend de la résolution complète de la nuit (Voyante, Salvateur, Sorcière, attaques de loups, Corbeau), directement dans les modules de rôle/`GameEngine`/`VoteManager` pour tout ce qui est connu immédiatement (Alien, Loup Vert, Chasseur, Barbie, votes de jour). 16 tests (`eventLog.test.ts`). Commit `87243e1`.
+- **17.4b** — `PERFORMANCE_SCORERS` rempli rôle par rôle à partir du journal (voir section 8 ci-dessus). 25 tests (`performance.test.ts`, réécrit avec un constructeur de contexte partagé). Commit `186f701`.
+- **17.4c** — Badges : `BADGE_REGISTRY` (18 badges, liste approuvée par l'utilisateur) + `UserBadge` (table DB) + nouvelles colonnes `PlayerRecord` (contribution par partie aux totaux de carrière) + `GET /api/badges/me`. Ajout au passage d'un événement `MOWGLI_TRANSFORM` (manquant en 17.4a, nécessaire pour le badge secret « Ami Imaginaire »). 32 tests. Commit `c687070`.
+- **17.4d** — Page web `/achievements` (débloqués + à débloquer + compteur de secrets restants, jamais leur contenu). Commit `7624d3b`.
+- **17.4e** — `getLeaderboard()` (7 catégories) + `GET /api/leaderboard` (public, sans authentification) + page `/leaderboard`. 5 tests. Commit `0b2b7f0`.
+- **17.4f** — `GET /api/profile/:username` (public) + page `/compare` (comparaison côte à côte, valeur la plus haute mise en évidence). Commit `0af181e`.
+
+**Vérifications effectuées à chaque étape** : `tsc -b` (shared + game-engine + rating + server + web), `next build` (web, liste bien chaque nouvelle route dans sa sortie), suite de tests complète du monorepo (**286/286 tests verts** à la fin de 17.4f — 0 régression sur les 211 tests pré-existants de fin 17.3). Pas de `docker compose up --build` réel ni de `prisma db push` (sandbox sans Docker ni accès réseau pour générer le client Prisma ou ses binaires — confirmé en tentant `prisma generate`, échec 403 sur `binaries.prisma.sh`) — **l'utilisateur doit lancer `npx prisma db push` avant tout redémarrage du serveur** (nouvelles colonnes `PlayerRecord` + nouvelle table `UserBadge`), puis tester en Docker local avant de déployer, comme prévu dès le départ. Aucun push git (pas d'identifiants dans ce sandbox) — tout est committé localement sur `master`.
+
+**Le cahier de charge #2 est maintenant entièrement complet** (17.1 → 17.4, tous les points du document du 8 août 2026).
 
 ---
 
@@ -305,7 +320,7 @@ Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
 
 1. ~~Compléter les statistiques restantes de la section 4~~ ✅
 2. ~~Coefficients de difficulté par rôle (section 7)~~ ✅
-3. ~~Performance Score par rôle (section 8)~~ 🚧 v1 générique seulement — voir la limite honnête documentée dans cette section, et section 17 pour la v2
+3. ~~Performance Score par rôle (section 8)~~ ✅ v2 avec journal d'événements — voir section 17.4a/b
 4. ~~Rating générique + calcul final (sections 6 et 9)~~ ✅
 5. ~~Ratings spécialisés (section 10)~~ ✅
 6. ~~XP + Niveau (section 11)~~ ✅
