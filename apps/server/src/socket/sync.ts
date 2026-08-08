@@ -11,6 +11,7 @@ import {
   pushPrivateRoleState,
 } from "./broadcast.js";
 import { pushWolfRoomState } from "./wolfRoom.js";
+import { pushAfterlifeRoomState } from "./afterlife.js";
 
 /**
  * The full "tell everyone what changed" sequence, minus timer scheduling
@@ -40,4 +41,9 @@ export function pushAllPrompts(io: Server, engine: GameEngine): void {
   // Resource counters (Barbie's power-available flag, Alien's chances,
   // Loup Vert's stolen-power status) — private to each player, phase-agnostic.
   pushPrivateRoleState(io, engine);
+  // Cahier de charge #2 §17.3 — deliberately OUTSIDE the NIGHT-only block
+  // above: unlike the wolf room, the Afterlife stays open through every
+  // phase for the rest of the game once anyone's dead (a no-op — see its
+  // own doc comment — until then).
+  pushAfterlifeRoomState(io, engine);
 }

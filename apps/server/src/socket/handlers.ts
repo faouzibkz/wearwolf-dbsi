@@ -3,6 +3,7 @@ import {
   SOCKET_EVENTS,
   DEFAULT_GAME_CONFIG,
   type AdminAuthPayload,
+  type AfterlifeChatSendPayload,
   type AdminCreateGamePayload,
   type AdminResolveTiePayload,
   type AdminSetSoundEffectsPayload,
@@ -33,6 +34,7 @@ import { mvpVotingRegistry } from "../mvp/mvpVotingRegistry.js";
 import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage } from "./wolfRoom.js";
+import { relayAfterlifeChatMessage } from "./afterlife.js";
 import { forceNextPhase } from "./forceNextPhase.js";
 import { safeAck, type Ack, type SocketData } from "./types.js";
 import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
@@ -713,6 +715,20 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
         relayWolfChatMessage(io, engine, playerId, payload.message);
+      }, ack);
+    });
+
+    // Cahier de charge #2 §17.3 — the Afterlife: same pattern as the wolf
+    // chat above, but relayAfterlifeChatMessage itself is the ONE place
+    // that checks membership (currently dead — see
+    // GameEngine.getAfterlifeMemberIds), so a living player who somehow
+    // fires this event gets rejected there rather than needing a second
+    // check duplicated here.
+    socket.on(SOCKET_EVENTS.AFTERLIFE_CHAT_SEND, (payload: AfterlifeChatSendPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const playerId = payload.playerId ?? socket.data.playerId!;
+        relayAfterlifeChatMessage(io, engine, playerId, payload.message);
       }, ack);
     });
 

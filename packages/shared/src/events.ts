@@ -110,6 +110,17 @@ export const SOCKET_EVENTS = {
   WOLF_CHAT_SEND: "wolf:chatSend",
   WOLF_KILL_VOTE: "wolf:killVote",
 
+  // --- cahier de charge #2 §17.3 — Afterlife: a private chat for every
+  // dead player (isSpectator, see GameEngine.getAfterlifeMemberIds),
+  // exact same shape/pattern as the wolf room above but membership is
+  // "currently dead" instead of "currently a wolf", and — unlike the wolf
+  // room, which only matters during NIGHT — this is live for the REST of
+  // the game once someone's dead, through every later phase, since a dead
+  // player keeps spectating everything that happens afterwards. ---
+  AFTERLIFE_ROOM_STATE: "afterlife:roomState",
+  AFTERLIFE_CHAT_MESSAGE: "afterlife:chatMessage",
+  AFTERLIFE_CHAT_SEND: "afterlife:chatSend",
+
   // --- sorciere ---
   SORCIERE_PROMPT: "sorciere:prompt",
   SORCIERE_ACTION: "sorciere:action",
@@ -390,6 +401,24 @@ export interface WolfRoomStatePayload {
   members: { id: string; nickname: string }[];
   alivePlayers: { id: string; nickname: string }[];
   currentVotes: Record<string, string>; // wolfId -> targetId (visible to wolves)
+}
+
+/** Cahier de charge #2 §17.3 — same shape/reasoning as WolfChatSendPayload/WolfChatMessagePayload, membership is "dead" instead of "wolf". */
+export interface AfterlifeChatSendPayload {
+  playerId: string;
+  message: string;
+}
+
+export interface AfterlifeChatMessagePayload {
+  playerId: string;
+  nickname: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface AfterlifeRoomStatePayload {
+  /** Every dead player (see GameEngine.getAfterlifeMemberIds) — everyone in this list is a member of the chat, unlike WolfRoomStatePayload.alivePlayers which is only "for context". */
+  members: { id: string; nickname: string }[];
 }
 
 export interface SorciereActionPayload {
