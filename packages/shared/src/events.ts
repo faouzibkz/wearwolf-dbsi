@@ -95,6 +95,14 @@ export const SOCKET_EVENTS = {
   NIGHT_PROMPT: "night:prompt", // server -> player with a role action to take
   NIGHT_ACTION_SUBMIT: "night:actionSubmit",
   MORNING_ANNOUNCEMENT: "morning:announcement",
+  // Cahier de charge #2 §17.1 — SEQUENTIAL night mode only (see GameConfig.
+  // nightMode). Broadcast to the WHOLE game room, never anything private:
+  // just "whose turn it is right now" so a player with nothing to do this
+  // step can render "the village is sleeping" instead of a blank screen,
+  // and so the client can show the night's progress. The player who
+  // actually has to act still gets their own NIGHT_PROMPT as always — this
+  // is a public companion to that, not a replacement.
+  NIGHT_STEP_STATE: "night:stepState",
 
   // --- wolf private room ---
   WOLF_ROOM_STATE: "wolf:roomState",
@@ -282,6 +290,17 @@ export interface NightPromptPayload {
   /** e.g. sorciere sees who was attacked; the Alien's ALIEN_GUESS prompt carries guessableRoleIds + remaining chances here */
   context?: Record<string, unknown>;
   deadlineAt: number;
+}
+
+/** SEQUENTIAL night mode only — see SOCKET_EVENTS.NIGHT_STEP_STATE's doc comment. Entirely public, no secret info. */
+export interface NightStepStatePayload {
+  /** null once every step this night is done and the night is about to resolve (no more turns left, resolution/MORNING is imminent). */
+  currentStepRoleId: RoleId | null;
+  /** 1-based position of currentStepRoleId within this night's step order, for a "3 / 6" style progress display. 0 if currentStepRoleId is null. */
+  stepIndex: number;
+  totalSteps: number;
+  /** Same convention as NightPromptPayload.deadlineAt — epoch ms. Null once currentStepRoleId is null. */
+  stepDeadlineAt: number | null;
 }
 
 export interface LoupVertGuessPromptPayload {

@@ -145,6 +145,44 @@ export const DEFAULT_TIMERS: TimerConfig = {
   tieRevote: 30,
 };
 
+/**
+ * Cahier de charge #2, section 17.1: how a night's active roles get
+ * prompted. "SIMULTANEOUS" (default) is the original, unchanged behavior —
+ * every active night role is prompted at once, one flat `TimerConfig.night`
+ * deadline for the whole night; nothing about this path changes.
+ * "SEQUENTIAL" is a new, purely opt-in alternative: roles act one at a
+ * time, in order, each with its own deadline — see
+ * `packages/game-engine`'s `NightSequencer` for the engine side and
+ * `apps/server/src/socket/timers.ts` for the per-step timer. Chosen by the
+ * admin at game creation; existing games/configs default to
+ * "SIMULTANEOUS" and are entirely unaffected.
+ */
+export type NightMode = "SIMULTANEOUS" | "SEQUENTIAL";
+
+/** Fallback duration (seconds) for a SEQUENTIAL role with no explicit entry in `GameConfig.nightStepDurations`. */
+export const DEFAULT_NIGHT_STEP_DURATION_SECONDS = 20;
+
+/**
+ * Suggested per-role SEQUENTIAL durations, loosely following the cahier de
+ * charge's own examples. Purely a starting point for
+ * `GameConfig.nightStepDurations` (the admin config screen pre-fills from
+ * this, then can override per role) — NOT what decides step *order*, which
+ * comes from `packages/game-engine`'s own `nightPriority` unless
+ * `GameConfig.nightStepOrder` overrides it. Roles absent here fall back to
+ * `DEFAULT_NIGHT_STEP_DURATION_SECONDS`.
+ */
+export const DEFAULT_NIGHT_STEP_DURATIONS: Partial<Record<RoleId, number>> = {
+  MOWGLI: 15,
+  SALVATEUR: 15,
+  ALIEN: 20,
+  VOYANTE: 15,
+  LOUP_GAROU: 30,
+  LOUP_BLANC: 30,
+  LOUP_VERT: 30,
+  SORCIERE: 20,
+  CORBEAU: 15,
+};
+
 export interface GameConfig {
   /** total number of players expected (informational; lobby can flex) */
   numPlayers: number;
@@ -173,6 +211,26 @@ export interface GameConfig {
   soundEffectsEnabled: boolean;
   /** display name for the game / preset name */
   name: string;
+  /** See NightMode's doc comment. Default "SIMULTANEOUS" (today's behavior, unchanged). */
+  nightMode: NightMode;
+  /**
+   * SEQUENTIAL-only. `null` (default) means "use packages/game-engine's own
+   * nightPriority order" — the same, already dependency-safe order
+   * SIMULTANEOUS mode's resolution already runs in (e.g. Salvateur before
+   * the wolves, wolves before the Sorcière). Only set this to override
+   * that default; "restore default order" in the admin UI just sets it
+   * back to null rather than recomputing anything.
+   */
+  nightStepOrder: RoleId[] | null;
+  /** SEQUENTIAL-only. Per-role duration overrides (seconds); a role missing here falls back to DEFAULT_NIGHT_STEP_DURATIONS then DEFAULT_NIGHT_STEP_DURATION_SECONDS. */
+  nightStepDurations: Partial<Record<RoleId, number>>;
+  /**
+   * SEQUENTIAL-only. Roles the admin has explicitly opted out of getting a
+   * dedicated turn this game — for that role, SEQUENTIAL mode behaves as
+   * if nobody at the table held it: no prompt, no step, ever, all game.
+   * Empty by default (nothing disabled).
+   */
+  nightStepDisabled: RoleId[];
 }
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
@@ -195,6 +253,10 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   autoProgress: false,
   soundEffectsEnabled: true,
   name: "Partie sans nom",
+  nightMode: "SIMULTANEOUS",
+  nightStepOrder: null,
+  nightStepDurations: {},
+  nightStepDisabled: [],
 };
 
 export interface RoleDefinitionMeta {
