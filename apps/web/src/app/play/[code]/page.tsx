@@ -12,6 +12,7 @@ import {
   type MvpResultPayload,
   type MvpStatePayload,
   type NightPromptPayload,
+  type NightStepStatePayload,
   type NotificationPayload,
   type PrivateRoleStatePayload,
   type RoleAssignedPayload,
@@ -50,6 +51,11 @@ export default function PlayPage() {
   const [role, setRole] = useState<RoleId | null>(null);
   const [wolfTeammates, setWolfTeammates] = useState<{ id: string; nickname: string }[]>([]);
   const [prompt, setPrompt] = useState<NightPromptPayload | null>(null);
+  // Cahier de charge #2 §17.1 — SEQUENTIAL night mode only. Null in
+  // SIMULTANEOUS mode: the server never emits NIGHT_STEP_STATE there (see
+  // GameEngine.isSequentialNightMode()), so this stays exactly what it was
+  // before this feature existed for every game that hasn't opted in.
+  const [nightStepState, setNightStepState] = useState<NightStepStatePayload | null>(null);
   const [loupVertGuessPrompt, setLoupVertGuessPrompt] = useState<LoupVertGuessPromptPayload | null>(null);
   const [loupVertStolenPrompt, setLoupVertStolenPrompt] = useState<NightPromptPayload | null>(null);
   const [privateRoleState, setPrivateRoleState] = useState<PrivateRoleStatePayload>({});
@@ -101,6 +107,7 @@ export default function PlayPage() {
         setPrompt(null);
         setLoupVertGuessPrompt(null);
         setLoupVertStolenPrompt(null);
+        setNightStepState(null);
       }
       soundEnabledRef.current = s.soundEffectsEnabled;
 
@@ -139,6 +146,7 @@ export default function PlayPage() {
       setWolfTeammates(payload.wolfTeammates ?? []);
     });
     socket.on(SOCKET_EVENTS.NIGHT_PROMPT, (payload: NightPromptPayload) => setPrompt(payload));
+    socket.on(SOCKET_EVENTS.NIGHT_STEP_STATE, (payload: NightStepStatePayload) => setNightStepState(payload));
     socket.on(SOCKET_EVENTS.LOUP_VERT_GUESS_PROMPT, (payload: LoupVertGuessPromptPayload) =>
       setLoupVertGuessPrompt(payload),
     );
@@ -181,6 +189,7 @@ export default function PlayPage() {
       socket.off(SOCKET_EVENTS.GAME_STATE);
       socket.off(SOCKET_EVENTS.ROLE_ASSIGNED);
       socket.off(SOCKET_EVENTS.NIGHT_PROMPT);
+      socket.off(SOCKET_EVENTS.NIGHT_STEP_STATE);
       socket.off(SOCKET_EVENTS.LOUP_VERT_GUESS_PROMPT);
       socket.off(SOCKET_EVENTS.LOUP_VERT_STOLEN_POWER_PROMPT);
       socket.off(SOCKET_EVENTS.PRIVATE_ROLE_STATE);
@@ -342,6 +351,7 @@ export default function PlayPage() {
           role={role}
           wolfTeammates={wolfTeammates}
           prompt={prompt}
+          nightStepState={nightStepState}
           loupVertGuessPrompt={loupVertGuessPrompt}
           loupVertStolenPrompt={loupVertStolenPrompt}
           privateRoleState={privateRoleState}
@@ -366,6 +376,7 @@ function PhaseView({
   role,
   wolfTeammates,
   prompt,
+  nightStepState,
   loupVertGuessPrompt,
   loupVertStolenPrompt,
   privateRoleState,
@@ -384,6 +395,7 @@ function PhaseView({
   role: RoleId | null;
   wolfTeammates: { id: string; nickname: string }[];
   prompt: NightPromptPayload | null;
+  nightStepState: NightStepStatePayload | null;
   loupVertGuessPrompt: LoupVertGuessPromptPayload | null;
   loupVertStolenPrompt: NightPromptPayload | null;
   privateRoleState: PrivateRoleStatePayload;
@@ -691,9 +703,34 @@ function PhaseView({
     case "NIGHT":
       return (
         <section className="space-y-4">
-          <section className="card text-center">
+          <section className="card text-center space-y-2">
             <h2 className="font-display text-lg text-gold-300">🌙 Nuit {state.nightNumber}</h2>
-            {!prompt && <p className="text-sm text-night-100/60 mt-2">Le village dort…</p>}
+            {/* Cahier de charge #2 §17.1 — SEQUENTIAL night mode only:
+                nightStepState is null all game for a game that never
+                opted in (see GameEngine.isSequentialNightMode()), so the
+                original "Le village dort…" behavior is completely
+                unchanged for every SIMULTANEOUS game. */}
+            {nightStepState?.currentStepRoleIds ? (
+              <div className="space-y-2 animate-fade-in">
+                <p className="text-xs text-night-600 uppercase tracking-wide">
+                  Étape {nightStepState.stepIndex} / {nightStepState.totalSteps}
+                </p>
+                <p className="text-sm text-night-100/70">
+                  {prompt
+                    ? "C'est votre tour…"
+                    : `${nightStepState.currentStepRoleIds
+                        .map((id) => ROLE_METADATA[id].displayName)
+                        .join(" & ")} ${
+                        nightStepState.currentStepRoleIds.length > 1 ? "agissent" : "agit"
+                      }…`}
+                </p>
+                <div className="flex justify-center">
+                  <CountdownTimer endsAt={nightStepState.stepDeadlineAt} />
+                </div>
+              </div>
+            ) : (
+              !prompt && <p className="text-sm text-night-100/60 mt-2">Le village dort…</p>
+            )}
           </section>
           {prompt && (
             <section className="card">

@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DEFAULT_GAME_CONFIG,
+  DEFAULT_NIGHT_STEP_DURATIONS,
+  DEFAULT_NIGHT_STEP_DURATION_SECONDS,
   ROLE_IDS,
   ROLE_METADATA,
   SOCKET_EVENTS,
@@ -293,6 +295,8 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
           ))}
         </div>
 
+        <NightModeConfig config={config} setConfig={setConfig} />
+
         <label className="flex items-center gap-2 text-sm pt-2">
           <input
             type="checkbox"
@@ -394,6 +398,166 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
         <h3 className="font-display text-night-100 pt-2">Joueurs</h3>
         <PlayerList players={admin.state.players} />
       </section>
+    </div>
+  );
+}
+
+// Canonical night-step order = packages/game-engine's own nightPriority
+// order (Mowgli, Salvateur, Alien, Voyante, the wolf pack, Sorcière,
+// Corbeau) — DEFAULT_NIGHT_STEP_DURATIONS' key insertion order already IS
+// that order (see its own doc comment in packages/shared/src/types.ts), so
+// reusing it here means this file never needs its own separate copy of
+// nightPriority values just to render a sensible default list.
+const NIGHT_STEP_ROLE_IDS = Object.keys(DEFAULT_NIGHT_STEP_DURATIONS) as RoleId[];
+
+/**
+ * Cahier de charge #2 §17.1 — admin-facing SEQUENTIAL night config. Every
+ * field here (nightMode, nightStepOrder, nightStepDurations,
+ * nightStepDisabled) is just plain GameConfig — no new socket events were
+ * needed server-side, it all flows through the existing
+ * ADMIN_UPDATE_CONFIG/ADMIN_CREATE_GAME paths (LOBBY-only, same as every
+ * other config field on this page). See GameEngine.updateConfig.
+ */
+function NightModeConfig({
+  config,
+  setConfig,
+}: {
+  config: GameConfig;
+  setConfig: (updater: (c: GameConfig) => GameConfig) => void;
+}) {
+  const sequential = config.nightMode === "SEQUENTIAL";
+  // null nightStepOrder means "use the engine's own default order" — only
+  // materialize an explicit array the first time the admin actually
+  // reorders something (see moveStep below); until then, display the
+  // canonical order without writing anything to config.
+  const order = config.nightStepOrder && config.nightStepOrder.length > 0
+    ? config.nightStepOrder
+    : NIGHT_STEP_ROLE_IDS;
+
+  function moveStep(roleId: RoleId, direction: -1 | 1) {
+    setConfig((c) => {
+      const current = c.nightStepOrder && c.nightStepOrder.length > 0 ? [...c.nightStepOrder] : [...NIGHT_STEP_ROLE_IDS];
+      const i = current.indexOf(roleId);
+      const j = i + direction;
+      if (i === -1 || j < 0 || j >= current.length) return c;
+      [current[i], current[j]] = [current[j]!, current[i]!];
+      return { ...c, nightStepOrder: current };
+    });
+  }
+
+  function toggleDisabled(roleId: RoleId) {
+    setConfig((c) => {
+      const disabled = new Set(c.nightStepDisabled);
+      if (disabled.has(roleId)) disabled.delete(roleId);
+      else disabled.add(roleId);
+      return { ...c, nightStepDisabled: [...disabled] };
+    });
+  }
+
+  function setDuration(roleId: RoleId, seconds: number) {
+    setConfig((c) => ({
+      ...c,
+      nightStepDurations: { ...c.nightStepDurations, [roleId]: Math.max(5, seconds) },
+    }));
+  }
+
+  return (
+    <div className="space-y-3 pt-2 border-t border-night-700/60">
+      <h3 className="font-display text-gold-300">Déroulement de la nuit</h3>
+      <p className="text-xs text-night-600 -mt-1">
+        Simultanée (par défaut) : tout le monde joue son rôle en même temps, comme aujourd&apos;hui.
+        Séquentielle (nouveau) : les rôles agissent un par un, dans l&apos;ordre ci-dessous, chacun avec
+        son propre temps limite.
+      </p>
+      <div className="flex gap-4 text-sm">
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="nightMode"
+            checked={!sequential}
+            onChange={() => setConfig((c) => ({ ...c, nightMode: "SIMULTANEOUS" }))}
+          />
+          Simultanée
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="nightMode"
+            checked={sequential}
+            onChange={() => setConfig((c) => ({ ...c, nightMode: "SEQUENTIAL" }))}
+          />
+          Séquentielle
+        </label>
+      </div>
+
+      {sequential && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-night-600">
+              Ordre des étapes, durée par rôle (secondes), et rôles à désactiver cette partie.
+            </p>
+            <button
+              className="text-xs text-gold-300/80 hover:text-gold-300 underline"
+              onClick={() => setConfig((c) => ({ ...c, nightStepOrder: null }))}
+            >
+              Ordre par défaut
+            </button>
+          </div>
+          <ul className="space-y-1">
+            {order.map((roleId, i) => {
+              const disabled = config.nightStepDisabled.includes(roleId);
+              const duration =
+                config.nightStepDurations[roleId] ??
+                DEFAULT_NIGHT_STEP_DURATIONS[roleId] ??
+                DEFAULT_NIGHT_STEP_DURATION_SECONDS;
+              return (
+                <li
+                  key={roleId}
+                  className={`flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg border ${
+                    disabled ? "border-night-800 opacity-40" : "border-night-700"
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    <button
+                      type="button"
+                      className="text-night-100/50 hover:text-gold-300 disabled:opacity-20 leading-none"
+                      disabled={i === 0}
+                      onClick={() => moveStep(roleId, -1)}
+                      aria-label="Monter"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className="text-night-100/50 hover:text-gold-300 disabled:opacity-20 leading-none"
+                      disabled={i === order.length - 1}
+                      onClick={() => moveStep(roleId, 1)}
+                      aria-label="Descendre"
+                    >
+                      ▼
+                    </button>
+                  </div>
+                  <span className="w-6 text-night-600 text-xs">{i + 1}.</span>
+                  <span className="flex-1">{ROLE_METADATA[roleId].displayName}</span>
+                  <input
+                    type="number"
+                    min={5}
+                    className="input w-16 text-center"
+                    value={duration}
+                    disabled={disabled}
+                    onChange={(e) => setDuration(roleId, Number(e.target.value))}
+                  />
+                  <span className="text-xs text-night-600">s</span>
+                  <label className="flex items-center gap-1 text-xs text-night-100/70">
+                    <input type="checkbox" checked={!disabled} onChange={() => toggleDisabled(roleId)} />
+                    Activé
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
