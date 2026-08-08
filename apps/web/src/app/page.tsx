@@ -20,6 +20,9 @@ export default function HomePage() {
             <Link href="/history" className="text-night-100/70 hover:text-gold-300 transition-colors">
               Historique
             </Link>
+            <Link href="/achievements" className="text-night-100/70 hover:text-gold-300 transition-colors">
+              Succès
+            </Link>
             <button onClick={() => void logout()} className="text-night-100/50 hover:text-blood-300 transition-colors">
               Déconnexion
             </button>

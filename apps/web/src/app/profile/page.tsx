@@ -97,9 +97,14 @@ export default function ProfilePage() {
         <Link href="/" className="text-night-100/50 hover:text-gold-300 text-sm transition-colors">
           ← Accueil
         </Link>
-        <Link href="/history" className="text-night-100/50 hover:text-gold-300 text-sm transition-colors">
-          Historique des parties →
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/achievements" className="text-night-100/50 hover:text-gold-300 text-sm transition-colors">
+            Succès
+          </Link>
+          <Link href="/history" className="text-night-100/50 hover:text-gold-300 text-sm transition-colors">
+            Historique des parties →
+          </Link>
+        </div>
       </div>
 
       {/* Identity card */}
