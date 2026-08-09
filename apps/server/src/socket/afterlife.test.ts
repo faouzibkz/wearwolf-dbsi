@@ -87,6 +87,23 @@ describe("Afterlife (cahier de charge #2 §17.3)", () => {
       const payload = emitted[0]!.payload as AfterlifeRoomStatePayload;
       expect(payload.members.map((m) => m.id)).not.toContain(wolfId);
     });
+
+    it("includes every player's true role in allPlayers, including still-alive ones", () => {
+      const { engine, victimId, wolfId } = bootWithOneDeath();
+      const { io, emitted } = fakeIo();
+      pushAfterlifeRoomState(io, engine);
+      const payload = emitted[0]!.payload as AfterlifeRoomStatePayload;
+
+      // Every one of the 5 players is present, dead or alive.
+      expect(payload.allPlayers).toHaveLength(5);
+
+      const wolfEntry = payload.allPlayers.find((p) => p.id === wolfId)!;
+      expect(wolfEntry.roleId).toBe("LOUP_GAROU");
+      expect(wolfEntry.isAlive).toBe(true); // the killer is still very much alive
+
+      const victimEntry = payload.allPlayers.find((p) => p.id === victimId)!;
+      expect(victimEntry.isAlive).toBe(false);
+    });
   });
 
   describe("relayAfterlifeChatMessage", () => {

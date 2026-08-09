@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { AfterlifeChatMessagePayload, AfterlifeRoomStatePayload } from "@loupgarou/shared";
-import { SOCKET_EVENTS } from "@loupgarou/shared";
+import { ROLE_METADATA, SOCKET_EVENTS } from "@loupgarou/shared";
 import { emitWithAck } from "@/lib/socket";
 
 /**
@@ -58,6 +58,35 @@ export function AfterlifeChat({
           Envoyer
         </button>
       </div>
+      <AfterlifeRoleReveal allPlayers={room.allPlayers} />
     </section>
+  );
+}
+
+/**
+ * The whole point of being dead: you get to see everything. Every player's
+ * true role, alive or not — the server only ever sends this to Afterlife
+ * members (see AfterlifeRoomStatePayload's doc comment), so rendering it
+ * unconditionally here is safe by construction, not by a client-side check.
+ */
+function AfterlifeRoleReveal({ allPlayers }: { allPlayers: AfterlifeRoomStatePayload["allPlayers"] }) {
+  const sorted = [...allPlayers].sort((a, b) => Number(b.isAlive) - Number(a.isAlive));
+  return (
+    <div className="pt-2 border-t border-night-700/60">
+      <h4 className="text-xs uppercase tracking-wide text-night-600 mb-2">Tous les rôles</h4>
+      <ul className="grid grid-cols-2 gap-1.5 text-xs">
+        {sorted.map((p) => (
+          <li
+            key={p.id}
+            className={`flex items-center justify-between gap-2 rounded px-2 py-1 ${
+              p.isAlive ? "bg-night-800/50" : "bg-night-900/40 opacity-60"
+            }`}
+          >
+            <span className={p.isAlive ? "" : "line-through"}>{p.nickname}</span>
+            <span className="text-gold-300 shrink-0">{ROLE_METADATA[p.roleId].displayName}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

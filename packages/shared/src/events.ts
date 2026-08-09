@@ -419,6 +419,16 @@ export interface AfterlifeChatMessagePayload {
 export interface AfterlifeRoomStatePayload {
   /** Every dead player (see GameEngine.getAfterlifeMemberIds) — everyone in this list is a member of the chat, unlike WolfRoomStatePayload.alivePlayers which is only "for context". */
   members: { id: string; nickname: string }[];
+  /**
+   * Every player in the game — dead AND still alive — with their true
+   * role. Only ever pushed to `roomForPlayer(id)` for ids already in
+   * `members` (see apps/server/src/socket/afterlife.ts's
+   * pushAfterlifeRoomState), so a still-alive player can never receive
+   * this: the Afterlife is the one place full information is safe to
+   * reveal, since everyone reading it is already out of the game and has
+   * no more moves left to make with it.
+   */
+  allPlayers: { id: string; nickname: string; roleId: RoleId; isAlive: boolean }[];
 }
 
 export interface SorciereActionPayload {

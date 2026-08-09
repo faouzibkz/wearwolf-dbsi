@@ -29,8 +29,18 @@ export function pushAfterlifeRoomState(io: Server, engine: GameEngine): void {
     const p = players.find((pl) => pl.id === id)!;
     return { id: p.id, nickname: p.nickname };
   });
+  // Full information for the dead: every player's true role, alive or not.
+  // Safe specifically BECAUSE this payload only ever reaches roomForPlayer(id)
+  // for ids already in memberIds below — see the doc comment on
+  // AfterlifeRoomStatePayload.allPlayers.
+  const allPlayers = players.map((p) => ({
+    id: p.id,
+    nickname: p.nickname,
+    roleId: p.roleId,
+    isAlive: p.isAlive,
+  }));
 
-  const payload: AfterlifeRoomStatePayload = { members };
+  const payload: AfterlifeRoomStatePayload = { members, allPlayers };
   for (const id of memberIds) {
     io.to(roomForPlayer(id)).emit(SOCKET_EVENTS.AFTERLIFE_ROOM_STATE, payload);
   }
