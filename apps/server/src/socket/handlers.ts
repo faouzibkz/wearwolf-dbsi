@@ -5,6 +5,7 @@ import {
   type AdminAuthPayload,
   type AfterlifeChatSendPayload,
   type AdminCreateGamePayload,
+  type AdminKillPlayerPayload,
   type AdminResolveTiePayload,
   type AdminSetSoundEffectsPayload,
   type AdminUpdateConfigPayload,
@@ -481,6 +482,14 @@ export function registerSocketHandlers(io: Server): void {
         const outcome = engine.resolveTieManually(payload.targetId);
         sync(io, engine);
         return outcome;
+      }, ack);
+    });
+
+    socket.on(SOCKET_EVENTS.ADMIN_KILL_PLAYER, (payload: AdminKillPlayerPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireAdminGame(socket);
+        engine.adminKillPlayer(payload.playerId);
+        sync(io, engine); // also handles GAME_ENDED if this was the winning blow
       }, ack);
     });
 

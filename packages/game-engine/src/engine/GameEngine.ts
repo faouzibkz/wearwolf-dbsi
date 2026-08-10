@@ -848,6 +848,42 @@ export class GameEngine {
   }
 
   /**
+   * Admin-only escape hatch: forcibly kills a player outright — e.g.
+   * someone disconnected who will never come back and is blocking the
+   * game. Deliberately routes through the SAME death pipeline as every
+   * other kill in the game (DeathQueue.processDeaths), not a special-cased
+   * "silent" removal: Chasseur revenge, Chef succession, and the Mowgli
+   * transform check all still trigger exactly as they would for a night
+   * kill or a day-vote elimination.
+   *
+   * Victory is checked immediately afterward if nothing is left pending.
+   * If something IS pending (a Chasseur shot, a Chef succession), this
+   * deliberately does NOT try to force the surrounding phase forward — it
+   * just waits, exactly like any other death does, until submitChasseurShot
+   * /chooseChefSuccessor resolves it and calls tryResumeAfterBlockers()
+   * itself.
+   */
+  adminKillPlayer(playerId: string): void {
+    if (this.state.phase === "LOBBY" || this.state.phase === "ENDED") {
+      throw new Error("Impossible de retirer un joueur maintenant.");
+    }
+    const player = this.ctx().getPlayer(playerId);
+    if (!player.isAlive) throw new Error("Ce joueur est déjà mort.");
+
+    this.snapshot();
+    processDeaths(this.ctx(), [{ playerId, cause: "ADMIN_KILL" }]);
+
+    if (!this.hasPendingBlockers()) {
+      const winner = checkVictory(this.ctx());
+      if (winner) {
+        this.endGame(winner);
+      } else if (isAlienStalemate(this.ctx())) {
+        this.endGame(null);
+      }
+    }
+  }
+
+  /**
    * True while any death-triggered action (Chasseur shot, Chef succession)
    * still needs resolving. Public because the server's timer scheduler
    * (apps/server/src/socket/timers.ts) must check this BEFORE deciding

@@ -569,26 +569,94 @@ function NightModeConfig({
 
 function DashboardBody({ admin }: { admin: AdminStatePayload }) {
   const roleByPlayer = new Map(admin.roles.map((r: PlayerPrivateRole) => [r.playerId, r.roleId]));
+  // Roles are hidden by default and only revealed per-player, on click — an
+  // admin who's ALSO playing (a normal setup: see instant replay's "same
+  // config" flow, which explicitly keeps the host seated as a player too)
+  // shouldn't have every role sitting on screen while they're trying to
+  // just click someone to kill without accidentally reading who they are.
+  const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
+  const [confirmingKillId, setConfirmingKillId] = useState<string | null>(null);
+  const [killError, setKillError] = useState<string | null>(null);
+
+  function toggleReveal(id: string) {
+    setRevealedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function killPlayer(id: string) {
+    setKillError(null);
+    try {
+      await emitWithAck(SOCKET_EVENTS.ADMIN_KILL_PLAYER, { playerId: id });
+    } catch (err) {
+      setKillError(err instanceof Error ? err.message : "Erreur inconnue.");
+    } finally {
+      setConfirmingKillId(null);
+    }
+  }
 
   return (
     <div className="grid md:grid-cols-3 gap-6">
       <section className="card md:col-span-2 space-y-3">
         <h2 className="font-display text-lg text-gold-300">Joueurs & rôles</h2>
+        <p className="text-xs text-night-100/40">Cliquez sur un pseudo pour révéler son rôle.</p>
+        {killError && <p className="text-blood-300 text-xs">{killError}</p>}
         <ul className="grid sm:grid-cols-2 gap-2 text-sm">
-          {admin.state.players.map((p) => (
-            <li
-              key={p.id}
-              className={`px-3 py-2 rounded-lg border flex justify-between ${
-                p.isAlive ? "border-night-600" : "border-night-800 opacity-50 line-through"
-              }`}
-            >
-              <span>
-                {p.isChef && "👑 "}
-                {p.nickname}
-              </span>
-              <span className="text-gold-300">{ROLE_METADATA[roleByPlayer.get(p.id)!]?.displayName}</span>
-            </li>
-          ))}
+          {admin.state.players.map((p) => {
+            const revealed = revealedIds.has(p.id);
+            return (
+              <li
+                key={p.id}
+                className={`px-3 py-2 rounded-lg border flex items-center justify-between gap-2 ${
+                  p.isAlive ? "border-night-600" : "border-night-800 opacity-50 line-through"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleReveal(p.id)}
+                  className="flex-1 text-left truncate hover:text-gold-300 transition-colors"
+                  title="Révéler / masquer le rôle"
+                >
+                  {p.isChef && "👑 "}
+                  {p.nickname}
+                </button>
+                <span className="text-gold-300 text-xs shrink-0 tabular-nums">
+                  {revealed ? ROLE_METADATA[roleByPlayer.get(p.id)!]?.displayName : "•••"}
+                </span>
+                {p.isAlive &&
+                  (confirmingKillId === p.id ? (
+                    <span className="flex items-center gap-1 shrink-0 text-xs">
+                      <button
+                        type="button"
+                        className="text-blood-300 hover:text-blood-200 font-medium"
+                        onClick={() => killPlayer(p.id)}
+                      >
+                        Confirmer
+                      </button>
+                      <button
+                        type="button"
+                        className="text-night-100/40 hover:text-night-100/70"
+                        onClick={() => setConfirmingKillId(null)}
+                      >
+                        Annuler
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      title="Retirer ce joueur de la partie"
+                      className="text-night-100/30 hover:text-blood-300 shrink-0 text-sm"
+                      onClick={() => setConfirmingKillId(p.id)}
+                    >
+                      ✕
+                    </button>
+                  ))}
+              </li>
+            );
+          })}
         </ul>
 
         {admin.state.tiedPlayerIds.length > 0 && admin.state.phase === "TIE_REVOTE" && (

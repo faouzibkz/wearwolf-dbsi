@@ -45,6 +45,12 @@ export const SOCKET_EVENTS = {
   ADMIN_REVEAL_ROLES: "admin:revealRoles",
   ADMIN_FORCE_START_CHEF_ELECTION: "admin:forceStartChefElection",
   ADMIN_RESOLVE_TIE: "admin:resolveTie",
+  // Admin-only escape hatch — e.g. a disconnected player who'll never come
+  // back and is blocking the game. See GameEngine.adminKillPlayer's doc
+  // comment: routes through the exact same death pipeline as any other
+  // kill (Chasseur revenge / Chef succession / Mowgli transform all still
+  // trigger), it is not a special-cased silent removal.
+  ADMIN_KILL_PLAYER: "admin:killPlayer",
   ADMIN_SAVE_PRESET: "admin:savePreset",
   ADMIN_LIST_PRESETS: "admin:listPresets",
   ADMIN_SET_SOUND_EFFECTS: "admin:setSoundEffects", // togglable anytime, unlike the rest of GameConfig
@@ -267,6 +273,10 @@ export interface ReplayStartedPayload {
   gameCode: string;
   playerId: string;
   reconnectToken: string;
+}
+
+export interface AdminKillPlayerPayload {
+  playerId: string;
 }
 
 export interface AdminCreateGamePayload {
