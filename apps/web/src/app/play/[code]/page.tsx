@@ -17,6 +17,7 @@ import {
   type NightStepStatePayload,
   type NotificationPayload,
   type PrivateRoleStatePayload,
+  type ReplayStartedPayload,
   type RoleAssignedPayload,
   type RoleId,
   type WolfRoomStatePayload,
@@ -24,7 +25,7 @@ import {
 } from "@loupgarou/shared";
 import { emitWithAck, getSocket } from "@/lib/socket";
 import { startClockSync } from "@/lib/serverClock";
-import { loadPlayerSession, type PlayerSession } from "@/lib/session";
+import { loadAdminSession, loadPlayerSession, savePlayerSession, type PlayerSession } from "@/lib/session";
 import {
   playChefFanfare,
   playDeathBell,
@@ -116,6 +117,14 @@ export default function PlayPage() {
   const [endStats, setEndStats] = useState<unknown>(null);
   const [mvpState, setMvpState] = useState<MvpStatePayload | null>(null);
   const [mvpResult, setMvpResult] = useState<MvpResultPayload | null>(null);
+  // Set once, client-side only (localStorage isn't available during SSR —
+  // same reason `session` itself is only ever populated inside the effect
+  // below, not at render time). Non-null exactly when this same browser is
+  // ALSO running the admin dashboard for this game — i.e. the host is
+  // playing from this very tab, which is what EndGamePanel's replay
+  // buttons are gated on (see the "instant replay" feature: only the
+  // original host can relaunch, and this is how a player tab proves it).
+  const [hostToken, setHostToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRoleDetail, setShowRoleDetail] = useState(false);
   const [confirmingChefSkip, setConfirmingChefSkip] = useState(false);
@@ -131,6 +140,11 @@ export default function PlayPage() {
       return;
     }
     setSession(stored);
+
+    const adminSession = loadAdminSession();
+    if (adminSession && adminSession.gameCode === code) {
+      setHostToken(adminSession.hostToken);
+    }
 
     const socket = getSocket();
     startClockSync();
@@ -237,6 +251,19 @@ export default function PlayPage() {
     });
     socket.on(SOCKET_EVENTS.MVP_STATE, (payload: MvpStatePayload) => setMvpState(payload));
     socket.on(SOCKET_EVENTS.MVP_RESULT, (payload: MvpResultPayload) => setMvpResult(payload));
+    // Instant replay (see EndGamePanel): every OTHER carried-over player
+    // gets pushed their new identity here — the host who actually clicked
+    // replay gets theirs directly from the REPLAY_REQUEST ack instead, see
+    // EndGamePanel's own handler, so this only ever fires for passengers.
+    socket.on(SOCKET_EVENTS.REPLAY_STARTED, (payload: ReplayStartedPayload) => {
+      savePlayerSession({
+        gameCode: payload.gameCode,
+        playerId: payload.playerId,
+        reconnectToken: payload.reconnectToken,
+        nickname: stored!.nickname,
+      });
+      router.replace(`/play/${payload.gameCode}`);
+    });
 
     return () => {
       socket.off("connect", reconnect);
@@ -258,6 +285,7 @@ export default function PlayPage() {
       socket.off(SOCKET_EVENTS.GAME_ENDED);
       socket.off(SOCKET_EVENTS.MVP_STATE);
       socket.off(SOCKET_EVENTS.MVP_RESULT);
+      socket.off(SOCKET_EVENTS.REPLAY_STARTED);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
@@ -406,7 +434,14 @@ export default function PlayPage() {
       {!me?.isAlive && afterlifeRoom && <AfterlifeChat room={afterlifeRoom} messages={afterlifeMessages} />}
 
       {endStats ? (
-        <EndGamePanel stats={endStats} myPlayerId={session.playerId} mvpState={mvpState} mvpResult={mvpResult} />
+        <EndGamePanel
+          stats={endStats}
+          myPlayerId={session.playerId}
+          mvpState={mvpState}
+          mvpResult={mvpResult}
+          gameCode={code}
+          hostToken={hostToken}
+        />
       ) : (
         <PhaseView
           key={state.phase}

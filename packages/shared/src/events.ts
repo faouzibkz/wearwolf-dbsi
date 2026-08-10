@@ -180,6 +180,18 @@ export const SOCKET_EVENTS = {
   // --- end game ---
   GAME_ENDED: "game:ended",
 
+  // --- instant replay: the original host, from their own player tab on
+  // the end screen, can relaunch with the exact same roster + config (see
+  // socket/replay.ts's createReplayGame). REPLAY_REQUEST is sent from that
+  // player's own socket (proven to be the host via hostToken in the
+  // payload, not socket-based admin auth, since the admin dashboard is
+  // typically a SEPARATE tab/socket); REPLAY_STARTED is pushed to every
+  // OTHER carried-over player's own room so their tab follows along
+  // automatically — the requester gets their own new identity directly in
+  // the REPLAY_REQUEST ack instead, no round trip needed. ---
+  REPLAY_REQUEST: "replay:request",
+  REPLAY_STARTED: "replay:started",
+
   // --- post-game MVP vote (cahier de charge section 12). Opens
   // automatically the moment GAME_ENDED fires (see socket/handlers.ts's
   // sync()); every player who was in the game gets exactly one vote for
@@ -225,6 +237,33 @@ export interface PlayerJoinPayload {
 }
 
 export interface PlayerReconnectPayload {
+  gameCode: string;
+  playerId: string;
+  reconnectToken: string;
+}
+
+export interface ReplayRequestPayload {
+  gameCode: string;
+  /** Proves the requester is this (now-ended) game's original host — validated the same way ADMIN_AUTH resumption is, via GameRegistry.isValidHostToken. */
+  hostToken: string;
+  /**
+   * Purely a client-side navigation hint (same-config vs. land-on-the-
+   * config-screen) — the server carries the roster over identically either
+   * way, so this field isn't branched on server-side at all.
+   */
+  reconfigure: boolean;
+}
+
+export interface ReplayRequestResult {
+  code: string;
+  hostToken: string;
+  /** Only set if the requester also held a player seat in the old game (the common case, but hosts aren't required to play). */
+  playerId?: string;
+  reconnectToken?: string;
+}
+
+/** Pushed to roomForPlayer(oldPlayerId) for every OTHER carried-over player — never to the requester, who gets the same info directly in their own ReplayRequestResult. */
+export interface ReplayStartedPayload {
   gameCode: string;
   playerId: string;
   reconnectToken: string;
@@ -456,6 +495,16 @@ export interface AdminStatePayload {
   state: GameStatePublic;
   roles: PlayerPrivateRole[];
   logs: LogEntry[];
+  /**
+   * The engine's actual current config — added so the admin config screen
+   * can seed its form from real server state instead of always starting
+   * from DEFAULT_GAME_CONFIG (which used to silently discard whatever was
+   * already saved via ADMIN_UPDATE_CONFIG on every page refresh, and would
+   * have undermined instant replay's "reconfigure" flow otherwise, since
+   * that lands the host back on this same screen expecting to see the
+   * PREVIOUS game's settings, not a blank slate).
+   */
+  config: GameConfig;
 }
 
 export interface GameEndedPayload {

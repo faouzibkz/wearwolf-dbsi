@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { EndGameStats, MvpResultPayload, MvpStatePayload } from "@loupgarou/shared";
+import { useRouter } from "next/navigation";
+import type { EndGameStats, MvpResultPayload, MvpStatePayload, ReplayRequestResult } from "@loupgarou/shared";
 import { SOCKET_EVENTS } from "@loupgarou/shared";
 import { emitWithAck } from "@/lib/socket";
+import { saveAdminSession, savePlayerSession } from "@/lib/session";
 import { RoleCard } from "./RoleCard";
 
 interface EndGamePanelProps {
@@ -11,9 +13,12 @@ interface EndGamePanelProps {
   myPlayerId: string;
   mvpState: MvpStatePayload | null;
   mvpResult: MvpResultPayload | null;
+  gameCode: string;
+  /** Non-null exactly when this browser is also the original host of this game — see play/[code]/page.tsx's doc comment. Gates the replay buttons: only the original host can relaunch. */
+  hostToken: string | null;
 }
 
-export function EndGamePanel({ stats, myPlayerId, mvpState, mvpResult }: EndGamePanelProps) {
+export function EndGamePanel({ stats, myPlayerId, mvpState, mvpResult, gameCode, hostToken }: EndGamePanelProps) {
   const s = stats as EndGameStats;
   return (
     <section className="space-y-6 animate-fade-in">
@@ -38,7 +43,103 @@ export function EndGamePanel({ stats, myPlayerId, mvpState, mvpResult }: EndGame
         ))}
       </div>
       <MvpVotePanel roleReveal={s.roleReveal} myPlayerId={myPlayerId} mvpState={mvpState} mvpResult={mvpResult} />
+      {hostToken && (
+        <ReplayPanel
+          gameCode={gameCode}
+          hostToken={hostToken}
+          myPlayerId={myPlayerId}
+          myNickname={s.roleReveal.find((r) => r.playerId === myPlayerId)?.nickname ?? ""}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Instant replay — only ever rendered for the original host (see
+ * EndGamePanel's hostToken prop). Two flavors, both carrying the whole
+ * roster over under their same pseudo server-side (see
+ * apps/server/src/socket/replay.ts):
+ *
+ *  - Same config: this tab follows straight into the new lobby as a
+ *    player (matching "play with his pseudo"), and a SECOND tab opens for
+ *    the new admin dashboard — so the host ends up with exactly the two
+ *    tabs the feature asked for, without losing either role.
+ *  - Reconfigure: this tab goes straight to the new admin config screen
+ *    (pre-filled with the old settings, since the new game already
+ *    starts from the old game's exact config) so the host can tweak
+ *    before anyone starts.
+ */
+function ReplayPanel({
+  gameCode,
+  hostToken,
+  myNickname,
+}: {
+  gameCode: string;
+  hostToken: string;
+  myPlayerId: string;
+  myNickname: string;
+}) {
+  const router = useRouter();
+  const [loading, setLoading] = useState<"same" | "reconfigure" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function replay(reconfigure: boolean) {
+    setError(null);
+    setLoading(reconfigure ? "reconfigure" : "same");
+    try {
+      const result = await emitWithAck<ReplayRequestResult>(SOCKET_EVENTS.REPLAY_REQUEST, {
+        gameCode,
+        hostToken,
+        reconfigure,
+      });
+      saveAdminSession({ hostToken: result.hostToken, gameCode: result.code });
+      if (result.playerId && result.reconnectToken) {
+        savePlayerSession({
+          gameCode: result.code,
+          playerId: result.playerId,
+          reconnectToken: result.reconnectToken,
+          nickname: myNickname,
+        });
+      }
+      if (reconfigure) {
+        router.push(`/admin/${result.code}`);
+      } else {
+        window.open(`/admin/${result.code}`, "_blank");
+        router.push(`/play/${result.code}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue.");
+      setLoading(null);
+    }
+  }
+
+  return (
+    <div className="card space-y-3 animate-fade-in border-gold-400/20">
+      <h3 className="font-display text-gold-300 text-center">🔁 Rejouer</h3>
+      {error && <p className="text-blood-300 text-sm text-center">{error}</p>}
+      <div className="flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          className="btn-primary text-sm px-4 py-2 disabled:opacity-40"
+          disabled={loading !== null}
+          onClick={() => replay(false)}
+        >
+          {loading === "same" ? "Lancement…" : "Rejouer (mêmes paramètres)"}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary text-sm px-4 py-2 disabled:opacity-40"
+          disabled={loading !== null}
+          onClick={() => replay(true)}
+        >
+          {loading === "reconfigure" ? "Ouverture…" : "Rejouer (modifier les paramètres)"}
+        </button>
+      </div>
+      <p className="text-xs text-night-100/40 text-center">
+        Tous les joueurs de cette partie seront automatiquement replacés dans la nouvelle, avec le même pseudo.
+      </p>
+    </div>
   );
 }
 

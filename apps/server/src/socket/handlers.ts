@@ -24,6 +24,9 @@ import {
   type NightActionSubmitPayload,
   type PlayerJoinPayload,
   type PlayerReconnectPayload,
+  type ReplayRequestPayload,
+  type ReplayRequestResult,
+  type ReplayStartedPayload,
   type WolfChatSendPayload,
 } from "@loupgarou/shared";
 import { gameRegistry } from "../gameRegistry.js";
@@ -36,6 +39,7 @@ import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage } from "./wolfRoom.js";
 import { relayAfterlifeChatMessage } from "./afterlife.js";
+import { createReplayGame } from "./replay.js";
 import { forceNextPhase } from "./forceNextPhase.js";
 import { safeAck, type Ack, type SocketData } from "./types.js";
 import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
@@ -302,6 +306,49 @@ export function registerSocketHandlers(io: Server): void {
         });
         sync(io, engine);
         return { roleId: player.roleId, wolfTeammates };
+      }, ack);
+    });
+
+    // Instant replay. Sent from the requester's own PLAYER socket (the end
+    // screen lives on /play/<code>, not /admin/<code> — those are normally
+    // two separate tabs/sockets) — hostToken in the payload is what proves
+    // they're allowed to do this, same validation ADMIN_AUTH resumption
+    // uses, since this socket was never registered as this game's admin
+    // socket. See socket/replay.ts for the actual roster-carrying logic.
+    socket.on(SOCKET_EVENTS.REPLAY_REQUEST, (payload: ReplayRequestPayload, ack: Ack) => {
+      safeAck(() => {
+        const oldEngine = gameRegistry.requireGame(payload.gameCode);
+        if (!gameRegistry.isValidHostToken(payload.gameCode, payload.hostToken)) {
+          throw new Error("Seul l'hôte de la partie précédente peut la relancer.");
+        }
+        if (oldEngine.getPhase() !== "ENDED") {
+          throw new Error("La partie précédente n'est pas encore terminée.");
+        }
+
+        const { engine: newEngine, hostToken: newHostToken, roster } = createReplayGame(oldEngine);
+        sync(io, newEngine);
+
+        // Everyone ELSE gets pushed their new identity so their own
+        // /play/<oldCode> tab (still sitting on the end screen) can follow
+        // automatically — the requester gets theirs directly below instead,
+        // no need to also broadcast it back to their own room.
+        const requesterEntry = roster.find((r) => r.oldPlayerId === socket.data.playerId);
+        for (const entry of roster) {
+          if (entry === requesterEntry) continue;
+          const startedPayload: ReplayStartedPayload = {
+            gameCode: newEngine.getCode(),
+            playerId: entry.newPlayerId,
+            reconnectToken: entry.reconnectToken,
+          };
+          io.to(roomForPlayer(entry.oldPlayerId)).emit(SOCKET_EVENTS.REPLAY_STARTED, startedPayload);
+        }
+
+        const result: ReplayRequestResult = { code: newEngine.getCode(), hostToken: newHostToken };
+        if (requesterEntry) {
+          result.playerId = requesterEntry.newPlayerId;
+          result.reconnectToken = requesterEntry.reconnectToken;
+        }
+        return result;
       }, ack);
     });
 

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  DEFAULT_GAME_CONFIG,
   DEFAULT_NIGHT_STEP_DURATIONS,
   DEFAULT_NIGHT_STEP_DURATION_SECONDS,
   ROLE_IDS,
@@ -173,7 +172,13 @@ function ControlBar({ admin }: { admin: AdminStatePayload }) {
 }
 
 function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminStatePayload; joinUrl: string }) {
-  const [config, setConfig] = useState<GameConfig>(DEFAULT_GAME_CONFIG);
+  // Seeded from the engine's REAL current config (not DEFAULT_GAME_CONFIG)
+  // — useState only ever reads this initializer on first mount, so this
+  // reflects whatever was already saved (a previous ADMIN_UPDATE_CONFIG,
+  // or a carried-over config from instant replay's "reconfigure" flow —
+  // see AdminStatePayload.config's doc comment) without fighting the
+  // player's own subsequent edits on every ADMIN_STATE tick.
+  const [config, setConfig] = useState<GameConfig>(admin.config);
   const [busy, setBusy] = useState(false);
 
   function setRoleCount(roleId: RoleId, count: number) {

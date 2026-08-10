@@ -24,6 +24,7 @@ export function broadcastGameState(io: Server, engine: GameEngine): void {
       state: engine.getPublicState(),
       roles: engine.getAdminRoles(),
       logs: engine.getLogs(),
+      config: engine.getConfig(),
     };
     io.to(adminSocketId).emit(SOCKET_EVENTS.ADMIN_STATE, payload);
   }
