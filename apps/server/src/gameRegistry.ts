@@ -74,9 +74,48 @@ class GameRegistry {
     return this.userIdByPlayerId.get(playerId);
   }
 
+  /**
+   * Does this account already have a live seat in this specific game?
+   * Backs PLAYER_JOIN's account-based reconnect (closed tab, new device,
+   * re-scanned QR code — doesn't matter which): if the answer is yes, the
+   * handler resumes that seat instead of erroring on a taken nickname or
+   * creating a duplicate ghost player. Scoped to one engine's own roster
+   * (not the flat cross-game userIdByPlayerId map) since the same account
+   * could in principle be a player in more than one open game at once.
+   */
+  findPlayerIdForUser(engine: GameEngine, userId: string): string | undefined {
+    for (const player of engine.getPlayers()) {
+      if (this.userIdByPlayerId.get(player.id) === userId) return player.id;
+    }
+    return undefined;
+  }
+
   /** Called once history is durably written for a game, so this map doesn't grow forever across a long-running process. */
   clearPlayerUserIds(playerIds: string[]): void {
-    for (const id of playerIds) this.userIdByPlayerId.delete(id);
+    for (const id of playerIds) {
+      this.userIdByPlayerId.delete(id);
+      this.currentSocketByPlayerId.delete(id);
+    }
+  }
+
+  /**
+   * Which socket.id is THE current live connection for a player — set on
+   * every PLAYER_JOIN/PLAYER_RECONNECT. Exists purely to guard the
+   * "disconnect" handler against a race: if account X reconnects from a
+   * new tab/device while an old, stale tab is still hanging around, that
+   * old tab's eventual "disconnect" event must not flip the player back to
+   * disconnected after the new tab already took over — only the socket
+   * that's still the CURRENT one for this player is allowed to do that
+   * (see socket/handlers.ts's "disconnect" handler).
+   */
+  private currentSocketByPlayerId = new Map<string, string>();
+
+  setCurrentSocket(playerId: string, socketId: string): void {
+    this.currentSocketByPlayerId.set(playerId, socketId);
+  }
+
+  isCurrentSocket(playerId: string, socketId: string): boolean {
+    return this.currentSocketByPlayerId.get(playerId) === socketId;
   }
 }
 

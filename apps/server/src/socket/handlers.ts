@@ -238,8 +238,31 @@ export function registerSocketHandlers(io: Server): void {
           throw new Error("Vous devez être connecté pour rejoindre une partie.");
         }
         const engine = gameRegistry.requireGame(payload.gameCode);
+
+        // This account might already have a live seat in this game — closed
+        // tab, new device, re-scanned the QR code, doesn't matter how they
+        // got here. If so, resume that seat instead of erroring on a taken
+        // nickname (or worse, silently creating a duplicate ghost player
+        // under a different one). The client's own /play/<code> page fires
+        // PLAYER_RECONNECT right after this, which is what actually
+        // restores role/wolfTeammates — this only has to hand back the
+        // right identity so that follow-up call finds the existing player.
+        const existingPlayerId = gameRegistry.findPlayerIdForUser(engine, session.userId);
+        if (existingPlayerId) {
+          const existing = engine.getPlayers().find((p) => p.id === existingPlayerId)!;
+          engine.setConnected(existing.id, true);
+          socket.data.gameCode = engine.getCode();
+          socket.data.playerId = existing.id;
+          gameRegistry.setCurrentSocket(existing.id, socket.id);
+          socket.join(roomForGame(engine.getCode()));
+          socket.join(roomForPlayer(existing.id));
+          sync(io, engine);
+          return { playerId: existing.id, reconnectToken: existing.reconnectToken };
+        }
+
         const player = engine.addPlayer(payload.nickname);
         gameRegistry.setPlayerUserId(player.id, session.userId);
+        gameRegistry.setCurrentSocket(player.id, socket.id);
         socket.data.gameCode = engine.getCode();
         socket.data.playerId = player.id;
         socket.join(roomForGame(engine.getCode()));
@@ -268,6 +291,7 @@ export function registerSocketHandlers(io: Server): void {
         engine.setConnected(player.id, true);
         socket.data.gameCode = engine.getCode();
         socket.data.playerId = player.id;
+        gameRegistry.setCurrentSocket(player.id, socket.id);
         socket.join(roomForGame(engine.getCode()));
         socket.join(roomForPlayer(player.id));
         const wolfTeammates = engine.getWolfTeammates(player.id);
@@ -286,7 +310,13 @@ export function registerSocketHandlers(io: Server): void {
       if (!gameCode) return;
       const engine = gameRegistry.get(gameCode);
       if (!engine) return;
-      if (playerId) {
+      // Guards against a race: if this account already reconnected from a
+      // NEW tab/device before this (old, stale) socket's disconnect event
+      // arrived, that new socket is now the current one for this player —
+      // this stale disconnect must not flip them back to disconnected and
+      // stomp on the reconnect that already happened. See gameRegistry's
+      // isCurrentSocket doc comment.
+      if (playerId && gameRegistry.isCurrentSocket(playerId, socket.id)) {
         engine.setConnected(playerId, false);
         sync(io, engine);
       }
