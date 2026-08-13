@@ -8,6 +8,14 @@ interface MvpVoteState {
   finalized: boolean;
   /** Set once finalized; empty if finalized with zero votes cast. */
   winners: string[];
+  /**
+   * Epoch ms deadline the caller (socket/mvpTimer.ts) auto-finalizes at if
+   * voting hasn't finished naturally by then — null if opened with no
+   * duration (safety net disabled, waits forever like voting always used
+   * to). Purely descriptive here: this registry never schedules anything
+   * itself, same "no I/O" boundary as the rest of this class.
+   */
+  deadlineAt: number | null;
 }
 
 /**
@@ -25,13 +33,24 @@ interface MvpVoteState {
 class MvpVotingRegistry {
   private stateByGameCode = new Map<string, MvpVoteState>();
 
-  /** Called once, right when GAME_ENDED fires (see socket/handlers.ts's sync()). Safe to call again for the same code (e.g. a stray double-emit) — it just resets voting. */
-  open(gameCode: string, eligiblePlayerIds: string[]): void {
+  /**
+   * Called once, right when GAME_ENDED fires (see socket/handlers.ts's
+   * sync()). Safe to call again for the same code (e.g. a stray
+   * double-emit) — it just resets voting.
+   *
+   * `durationSeconds` is purely recorded as `deadlineAt` (or left null if
+   * <= 0) for the caller to act on — see the field's own doc comment.
+   * Defaults to 0 (no deadline) so every pre-existing call site/test that
+   * doesn't care about the timer keeps compiling and behaving exactly as
+   * before.
+   */
+  open(gameCode: string, eligiblePlayerIds: string[], durationSeconds = 0): void {
     this.stateByGameCode.set(gameCode, {
       eligiblePlayerIds: new Set(eligiblePlayerIds),
       votes: new Map(),
       finalized: false,
       winners: [],
+      deadlineAt: durationSeconds > 0 ? Date.now() + durationSeconds * 1000 : null,
     });
   }
 

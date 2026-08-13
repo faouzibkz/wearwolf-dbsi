@@ -36,6 +36,7 @@ import { applyRatingUpdates } from "../rating/applyRating.js";
 import { applyBaseProgression, applyMvpBonus } from "../progression/applyProgression.js";
 import { applyBadgesForUser, applyBadgesForMvpWinners } from "../badges/applyBadges.js";
 import { mvpVotingRegistry } from "../mvp/mvpVotingRegistry.js";
+import { clearMvpVoteTimer, scheduleMvpVoteTimer } from "./mvpTimer.js";
 import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage } from "./wolfRoom.js";
@@ -88,15 +89,22 @@ export function sync(io: Server, engine: import("@loupgarou/game-engine").GameEn
 
     // Opens the post-game MVP vote (section 12) right away, independent of
     // everything below — every player who was in the game is eligible to
-    // vote (and be voted for). No fixed deadline: it finalizes naturally
-    // once everyone's voted (see MVP_VOTE_CAST below), or an admin can
-    // force it via ADMIN_FORCE_MVP_FINALIZE. See mvp/mvpVotingRegistry.ts.
+    // vote (and be voted for). It finalizes naturally once everyone's
+    // voted (see MVP_VOTE_CAST below); an admin can also force it early
+    // via ADMIN_FORCE_MVP_FINALIZE; and now it also carries its own
+    // safety-net deadline (TimerConfig.mvpVote, default 2 minutes) so a
+    // table that wanders off after the game doesn't leave the MVP screen —
+    // and the XP/badge award that follows it — stuck open forever. See
+    // mvp/mvpVotingRegistry.ts and socket/mvpTimer.ts.
     const playerIds = engine.getPlayers().map((p) => p.id);
-    mvpVotingRegistry.open(engine.getCode(), playerIds);
+    mvpVotingRegistry.open(engine.getCode(), playerIds, engine.getConfig().timers.mvpVote);
     const initialMvpState = buildMvpStatePayload(engine.getCode());
     if (initialMvpState) {
       io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.MVP_STATE, initialMvpState);
     }
+    scheduleMvpVoteTimer(engine.getCode(), initialMvpState?.deadlineAt ?? null, () =>
+      finalizeMvpVoting(io, engine),
+    );
 
     // Turns this finished game into durable per-account history/stats (see
     // db/persistence.ts's finalizeGameHistory doc comment). Fire-and-forget:
@@ -133,17 +141,24 @@ function buildMvpStatePayload(gameCode: string): MvpStatePayload | null {
     totalEligible: state.eligiblePlayerIds.size,
     votedPlayerIds: [...state.votes.keys()],
     finalized: state.finalized,
+    deadlineAt: state.deadlineAt,
   };
 }
 
 /**
- * Shared by both the natural "everyone's voted" path and
- * ADMIN_FORCE_MVP_FINALIZE. Idempotent (mvpVotingRegistry.finalize() is),
- * so a stray double-call (e.g. the last vote lands right as an admin also
- * clicks force-finalize) can't produce two different results.
+ * Shared by the natural "everyone's voted" path, ADMIN_FORCE_MVP_FINALIZE,
+ * and the deadline safety net (socket/mvpTimer.ts). Idempotent
+ * (mvpVotingRegistry.finalize() is), so a stray double-call — e.g. the
+ * last vote lands right as an admin also clicks force-finalize, or right
+ * as the deadline fires — can't produce two different results or a
+ * double XP/badge award. Always clears the pending deadline timer first,
+ * however this got called, so a natural or admin-forced finalize never
+ * leaves a stray timeout waiting to needlessly re-check an already-done
+ * vote.
  */
 function finalizeMvpVoting(io: Server, engine: import("@loupgarou/game-engine").GameEngine): void {
   const code = engine.getCode();
+  clearMvpVoteTimer(code);
   const result = mvpVotingRegistry.finalize(code);
   const winners = result.winners.map((playerId) => {
     const player = engine.getPlayers().find((p) => p.id === playerId);

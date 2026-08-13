@@ -542,6 +542,14 @@ export interface MvpStatePayload {
   /** Which players have voted so far (not who they voted for) — lets the UI show "waiting on: ..." */
   votedPlayerIds: string[];
   finalized: boolean;
+  /**
+   * Epoch ms deadline after which the server force-finalizes with whatever
+   * votes are in (see TimerConfig.mvpVote) — null if the safety net is
+   * disabled (duration 0) for this game. Feed straight into
+   * <CountdownTimer endsAt={...} />, same as every other server-issued
+   * deadline (phaseEndsAt, night step deadlineAt, ...).
+   */
+  deadlineAt: number | null;
 }
 
 export interface MvpResultPayload {

@@ -7,6 +7,7 @@ import { SOCKET_EVENTS } from "@loupgarou/shared";
 import { emitWithAck } from "@/lib/socket";
 import { saveAdminSession, savePlayerSession } from "@/lib/session";
 import { RoleCard } from "./RoleCard";
+import { CountdownTimer } from "./CountdownTimer";
 
 interface EndGamePanelProps {
   stats: unknown;
@@ -198,6 +199,14 @@ function MvpVotePanel({
   return (
     <div className="card space-y-3 animate-fade-in">
       <h3 className="font-display text-gold-300 text-center">🏅 Votez pour le MVP de la partie</h3>
+      {mvpState?.deadlineAt && (
+        <div className="flex flex-col items-center gap-1">
+          <CountdownTimer endsAt={mvpState.deadlineAt} />
+          <p className="text-xs text-night-100/40">
+            Passé ce délai, le vote se termine automatiquement avec les voix déjà reçues.
+          </p>
+        </div>
+      )}
       {error && <p className="text-blood-300 text-sm text-center">{error}</p>}
       {hasVoted ? (
         <p className="text-sm text-night-100/60 text-center">

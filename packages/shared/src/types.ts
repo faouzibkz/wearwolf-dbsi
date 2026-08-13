@@ -116,6 +116,18 @@ export interface TimerConfig {
   chefSuccession: number;
   /** Safety-net deadline for a manually-resolved tie (TIE_REVOTE) before it's broken at random. */
   tieRevote: number;
+  /**
+   * Safety-net deadline for the post-game MVP vote (see
+   * apps/server/src/mvp/mvpVotingRegistry.ts): if every eligible player
+   * votes before this elapses, the vote finalizes immediately and this
+   * never fires (same "whoever's earliest wins" pattern as every other
+   * timer here). If it elapses first — nobody voted, or only some did —
+   * the vote force-finalizes with whatever ballots are in, exactly as if
+   * an admin had clicked the manual override. 0 (or negative) disables the
+   * safety net entirely: voting then waits forever for everyone, or an
+   * admin's manual force-finalize, like it always used to.
+   */
+  mvpVote: number;
 }
 
 /**
@@ -143,6 +155,7 @@ export const DEFAULT_TIMERS: TimerConfig = {
   chasseurShot: 30,
   chefSuccession: 30,
   tieRevote: 30,
+  mvpVote: 120,
 };
 
 /**

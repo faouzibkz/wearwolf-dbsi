@@ -70,4 +70,26 @@ describe("mvpVotingRegistry", () => {
     expect(mvpVotingRegistry.getState("GAME-CLEAR")).toBeUndefined();
     expect(() => mvpVotingRegistry.castVote("GAME-CLEAR", "p1", "p2")).toThrow();
   });
+
+  it("defaults to no deadline (durationSeconds omitted)", () => {
+    mvpVotingRegistry.open("GAME-NO-DEADLINE", ["p1", "p2"]);
+    expect(mvpVotingRegistry.getState("GAME-NO-DEADLINE")?.deadlineAt).toBeNull();
+  });
+
+  it("0 or negative durationSeconds also disables the deadline", () => {
+    mvpVotingRegistry.open("GAME-ZERO-DEADLINE", ["p1", "p2"], 0);
+    expect(mvpVotingRegistry.getState("GAME-ZERO-DEADLINE")?.deadlineAt).toBeNull();
+    mvpVotingRegistry.open("GAME-NEG-DEADLINE", ["p1", "p2"], -5);
+    expect(mvpVotingRegistry.getState("GAME-NEG-DEADLINE")?.deadlineAt).toBeNull();
+  });
+
+  it("a positive durationSeconds records an epoch-ms deadline that many seconds out", () => {
+    const before = Date.now();
+    mvpVotingRegistry.open("GAME-WITH-DEADLINE", ["p1", "p2"], 120);
+    const after = Date.now();
+    const deadlineAt = mvpVotingRegistry.getState("GAME-WITH-DEADLINE")?.deadlineAt;
+    expect(deadlineAt).not.toBeNull();
+    expect(deadlineAt!).toBeGreaterThanOrEqual(before + 120_000);
+    expect(deadlineAt!).toBeLessThanOrEqual(after + 120_000);
+  });
 });

@@ -300,6 +300,24 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
           ))}
         </div>
 
+        <label className="flex items-center justify-between gap-2 text-sm pt-1">
+          <span>
+            Vote MVP après la partie — délai avant forçage
+            <span className="block text-xs text-night-600">
+              0 = pas de délai, on attend que tout le monde vote (ou forçage manuel seulement).
+            </span>
+          </span>
+          <input
+            type="number"
+            min={0}
+            className="input w-20 text-center"
+            value={config.timers.mvpVote}
+            onChange={(e) =>
+              setConfig((c) => ({ ...c, timers: { ...c.timers, mvpVote: Math.max(0, Number(e.target.value)) } }))
+            }
+          />
+        </label>
+
         <NightModeConfig config={config} setConfig={setConfig} />
 
         <label className="flex items-center gap-2 text-sm pt-2">
