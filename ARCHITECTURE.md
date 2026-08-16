@@ -4,7 +4,9 @@
 >
 > À lire avec **[FEATURES.md](./FEATURES.md)** (suivi fait/à faire du cahier de charge) et **[README.md](./README.md)** (guide pratique : lancer en local, déployer, dépanner).
 >
-> Dernière mise à jour : 8 août 2026 (cahier de charge #2 §17.1-17.4 complet).
+> Dernière mise à jour : 16 août 2026 (lot de 8 features additionnelles post-cahiers de charge — voir §11).
+>
+> **Note pour une session Claude sans historique reprenant ce dossier** : ce document + `FEATURES.md` sont tenus à jour après **chaque** feature livrée, pas seulement en fin de phase — c'est la source de vérité, pas le résumé d'une conversation passée. Avant de coder quoi que ce soit : lire ce document en entier (il est volontairement dense mais court), lire `FEATURES.md` pour savoir ce qui est fait/en cours/pas commencé, puis lancer la suite de tests (`npm run test` à la racine, ou `vitest run` dans `packages/game-engine`, `packages/rating`, `apps/server` individuellement) pour confirmer que l'état déclaré ici correspond bien au code réel avant d'ajouter quoi que ce soit dessus.
 
 ---
 
@@ -45,7 +47,7 @@ Workspaces npm (`package.json` racine) : `npm run build` construit dans l'ordre 
 
 `GameEngine.ts` est la classe centrale : elle possède l'état (`InternalState` — joueurs, phase, votes, timers logiques) et expose des méthodes d'action (`addPlayer`, `castDayVote`, `resolveNightActions`, etc.). Chaque partie tourne dans une instance séparée, **en mémoire**, tenue par `gameRegistry` côté serveur (voir §4.1).
 
-Les **phases** (`packages/shared/src/types.ts`, `PHASES`) : `LOBBY → CHEF_CANDIDACY → CHEF_DEBATE → CHEF_VOTE → CHEF_REVEAL → DAY_1_DISCUSSION → NIGHT → MORNING → DAY_DISCUSSION → [CHEF_SECOND_DEBATE] → DAY_VOTE → DAY_VOTE_RESULT → [TIE_DEFENSE → DAY_VOTE (round 2)] → ... boucle NIGHT/DAY ... → ENDED`. L'égalité au vote est résolue de façon fixe, non configurable : une égalité au round 1 ouvre `TIE_DEFENSE` puis un unique second tour où les candidats à égalité ne votent plus eux-mêmes (seul le reste du village vote, uniquement pour ces candidats) ; si ce second tour est à nouveau une égalité, personne n'est éliminé et la partie continue.
+Les **phases** (`packages/shared/src/types.ts`, `PHASES`) : `LOBBY → CHEF_CANDIDACY → CHEF_DEBATE → CHEF_VOTE → CHEF_REVEAL → DAY_1_DISCUSSION → NIGHT → MORNING → DAY_DISCUSSION → [CHEF_SECOND_DEBATE] → DAY_VOTE → DAY_VOTE_RESULT → [TIE_DEFENSE → DAY_VOTE (round 2)] → ... boucle NIGHT/DAY ... → ENDED`. L'égalité au vote est résolue de façon fixe, non configurable : une égalité au round 1 ouvre `TIE_DEFENSE` puis un unique second tour où les candidats à égalité ne votent plus eux-mêmes (seul le reste du village vote, uniquement pour ces candidats) ; si ce second tour est à nouveau une égalité, personne n'est éliminé et la partie continue. Aussi bien le vote du Chef (`CHEF_VOTE`) que le vote du jour (`DAY_VOTE`) se dépouillent **immédiatement dès que tout le monde a voté**, sans attendre l'expiration du minuteur — celui-ci reste un simple filet de sécurité pour les votants passifs/déconnectés (§11).
 
 Chaque **rôle** (`packages/game-engine/src/roles/*.ts`) est un `RoleModule` : une nuit priority (ordre de résolution), un `shortDescription`, et sa propre logique d'action de nuit si applicable. Le seul fichier à modifier pour ajouter un rôle est `roles/registry.ts` (le registre) plus le nouveau module lui-même — jamais `GameEngine.ts`.
 
@@ -79,18 +81,22 @@ Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_
 
 ### 3.4 Tests
 
-164 tests automatisés dans `packages/game-engine/src/__tests__/*.test.ts` (25 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités, victoire, `finalPlayerSummaries.test.ts`, la nuit séquentielle (§17.1, `sequentialNight.test.ts`), l'Afterlife (§17.3, `afterlife.test.ts`), et le journal d'événements (§17.4a, `eventLog.test.ts`).
+**186 tests** automatisés dans `packages/game-engine/src/__tests__/*.test.ts` (27 fichiers), `npm run test` (vérifié par exécution réelle — `vitest run` — pas par simple comptage). Couvrent : attribution des rôles, résolution de nuit par rôle, vote séquentiel, élection du Chef, égalités (round 2 = candidats exclus, égalité persistante = pas d'élimination, voir §11), victoire, `finalPlayerSummaries.test.ts`, la nuit séquentielle (§17.1, `sequentialNight.test.ts`), l'Afterlife (§17.3, `afterlife.test.ts`), le journal d'événements (§17.4a, `eventLog.test.ts`), et le rôle Prêtre (§11, `pretre.test.ts`).
 
-Depuis la Phase 2 : +37 tests dans `packages/rating` (rating, performance v2, coefficients — §3.5). Depuis la Phase 3 : +8 dans `progression/deriveProgression.test.ts`, +4 dans `mvp/tallyMvpVotes.test.ts`, +9 dans `mvp/mvpVotingRegistry.test.ts`. Depuis le cahier de charge #2 : `apps/server` compte au total 85 tests (§17.1d `broadcast.test.ts`/§43 `timerOrdering.test.ts`, §17.3b `afterlife.test.ts`, §17.4c `badges/*.test.ts`, §17.4e `leaderboard.test.ts`, en plus des tests Phase 2a/3 déjà cités) — **286 tests au total** (164 + 37 + 85), tous exécutés réellement, tous passants.
+**37 tests** dans `packages/rating` (rating, performance v2 — y compris `pretrePerformanceScore` —, coefficients — §3.5). **136 tests** dans `apps/server` (§17.1d `broadcast.test.ts`/§43 `timerOrdering.test.ts`, §17.3b `afterlife.test.ts`, §17.4c `badges/*.test.ts`, §17.4e `leaderboard.test.ts`, Phase 2a/3, plus §11 `idleCleanup.test.ts`/`wolfRoom.test.ts`/`notesRegistry.test.ts`).
+
+**359 tests au total** (186 + 37 + 136), tous exécutés réellement (jamais un simple `grep "it("`), tous passants — vérifié en entier après chaque feature du lot du 16 août 2026 (§11), pas seulement à la fin.
+
+**Comment lancer les tests dans cet environnement** : `node_modules/.bin/vitest` n'est parfois pas résolvable directement selon l'environnement d'exécution (symlink cassé observé dans le sandbox de développement autonome) — si `npx vitest run` échoue avec une erreur de résolution, chercher un `vitest` fonctionnel ailleurs dans l'arborescence `node_modules` (ex. via un cache `_npx`) plutôt que de conclure que les tests ne peuvent pas tourner. Sur une machine de développement normale (comme la vôtre, en PowerShell), `npm run test` depuis la racine ou `npx vitest run` depuis chaque package fonctionne directement, sans contournement.
 
 ---
 
 ## 3.5 Le moteur de rating (`packages/rating`) — Phase 2b
 
-Package isolé, **sans dépendance à Prisma ni au moteur de jeu**, sur le même modèle que `packages/game-engine` : que des fonctions pures, entièrement testées (19 tests). C'est délibéré — c'est la seule façon de garder la logique de rating testable dans un environnement où le client Prisma généré n'est pas toujours disponible (voir §9).
+Package isolé, **sans dépendance à Prisma ni au moteur de jeu**, sur le même modèle que `packages/game-engine` : que des fonctions pures, entièrement testées (37 tests). C'est délibéré — c'est la seule façon de garder la logique de rating testable dans un environnement où le client Prisma généré n'est pas toujours disponible (voir §9).
 
 - `roleDifficulty.ts` — coefficients par rôle (section 7), config seule, jamais lue par un `switch(roleId)`.
-- `performance.ts` — `PERFORMANCE_SCORERS`, un registre par rôle **sur le même modèle que `ROLE_REGISTRY`** du moteur de jeu : une formule générique par défaut (`genericPerformanceScore`), remplaçable rôle par rôle sans toucher au reste. Depuis §17.4b, 9 rôles ont une vraie formule (Voyante, Salvateur, Sorcière, Alien, Loup Garou/Blanc/Vert, Chasseur, Barbie, Corbeau), chacune lisant `PerformanceContext.events`/`fullEventLog` — voir §3.7 pour le journal d'événements dont ça dépend. Villageois/Mowgli utilisent toujours la formule générique, à raison (aucune action à noter pour eux).
+- `performance.ts` — `PERFORMANCE_SCORERS`, un registre par rôle **sur le même modèle que `ROLE_REGISTRY`** du moteur de jeu : une formule générique par défaut (`genericPerformanceScore`), remplaçable rôle par rôle sans toucher au reste. 10 rôles ont une vraie formule (Voyante, Salvateur, Sorcière, Alien, Loup Garou/Blanc/Vert, Chasseur, Barbie, Corbeau, et Prêtre depuis §11.8), chacune lisant `PerformanceContext.events`/`fullEventLog` — voir §3.7 pour le journal d'événements dont ça dépend. Villageois/Mowgli utilisent toujours la formule générique, à raison (aucune action à noter pour eux).
 - `rating.ts` — `computeRatingDelta()`, la formule Elo-inspirée (section 9) ; `specializedScopeForTeam()` pour les ratings Village/Loups/Solo (section 10).
 
 `apps/server/src/rating/applyRating.ts` est la seule couche qui touche Prisma : elle récupère les lignes nécessaires (utilisateurs liés, coefficients configurés), appelle les fonctions pures de `packages/rating`, et persiste le résultat. Appelée depuis `socket/handlers.ts`'s `sync()`, **après** `finalizeGameHistory()` (elle met à jour `PlayerRecord.ratingDelta` sur les lignes que `finalizeGameHistory` vient de créer — l'ordre compte).
@@ -253,7 +259,68 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 
 ---
 
-## 10. Où trouver quoi (index rapide)
+## 11. Lot de features additionnelles (16 août 2026)
+
+Huit demandes ponctuelles de l'utilisateur, hors des deux cahiers de charge, livrées en une session autonome (voir `FEATURES.md` §18 pour le suivi produit — cette section couvre le **comment technique**). Un commit + un tag Git indépendant par feature, 359/359 tests passants après chacune. Trois d'entre elles introduisent un **nouveau pattern architectural** (§11.1) qui sera probablement réutilisé pour de futures features similaires — à lire en premier.
+
+### 11.1 Nouveau pattern : registres serveur éphémères, hors du moteur de jeu
+
+Trois features (auto-fermeture des parties inactives, aperçu en direct de la cible des loups, notes personnelles) ont chacune besoin d'un peu d'état **côté serveur, temporaire, jamais persisté** — mais aucune de ces informations n'appartient au moteur de jeu pur (`packages/game-engine`), qui doit rester sérialisable/snapshotable sans rien connaître d'administratif ou d'UI. Le principe appliqué systématiquement :
+
+> Un `Map<code, ...>` (ou `Map<code, Map<playerId, ...>>`) module-level, défini dans `apps/server/src/<domaine>/`, **jamais** dans `internalTypes.ts`/`GameInternalState`. Vidé explicitement au bon moment (fin de partie, fermeture de partie), jamais laissé fuiter indéfiniment.
+
+Trois instances concrètes de ce pattern, à utiliser comme gabarit pour la prochaine feature du même genre :
+
+- **`apps/server/src/gameRegistry.ts`** (`lastActivityAt: Map<code, timestamp>`) + **`apps/server/src/socket/idleCleanup.ts`** — `touch(code)` réarme l'horloge à chaque `requireGame()` (donc à chaque action quelconque sur la partie). Un balayage périodique (`setInterval`, non-`ref`'d pour ne jamais empêcher le process de s'arrêter proprement) compare `Date.now()` aux seuils par phase : lobby vide 1h, partie terminée 30 min, partie en cours abandonnée 4h. Ferme via `GAME_CLOSED` (diffusé avant la coupure) puis `io.in(room).socketsLeave(room)` puis `gameRegistry.remove(code)` (qui purge aussi `adminSocketByCode`/`hostTokenByCode`/`userIdByPlayerId`).
+- **`apps/server/src/socket/wolfTargetPreview.ts`** (`previewsByGame: Map<code, Map<voterId, targetId>>`) — écrit sur l'événement `WOLF_TARGET_PREVIEW` (émis à chaque changement de sélection, **avant** confirmation), lu par `pushWolfRoomState` pour diffuser à toute la meute. Vidé automatiquement dès que `nightNumber` change pour ce code (`lastNightNumberByGame`, comparé avec un garde `.has()` — **piège rencontré et corrigé** : `undefined !== nightNumber` est toujours vrai, donc sans le `.has()` la toute première prévisualisation de chaque partie s'effaçait elle-même instantanément).
+- **`apps/server/src/notes/notesRegistry.ts`** (`notesByGame: Map<code, Map<playerId, text>>`) — `saveNote`/`getNote`, plafonné à 5000 caractères. Purgé **une seule fois, au seul endroit qui diffuse `GAME_ENDED`** (dans `sync()`, `socket/handlers.ts`) — jamais avant, jamais à la déconnexion d'un joueur (les notes doivent survivre à une reconnexion).
+
+### 11.2 Vote du jour — égalité re-codée en dur (remplace `TIE_REVOTE`)
+
+L'ancien filet de sécurité `TIE_REVOTE`/`ADMIN_RESOLVE_TIE`/`TieResolutionRule` (résolution manuelle par l'admin en cas de nouvelle égalité) a été **entièrement retiré** — plus simple, zéro ambiguïté, cohérent avec « aucune valeur codée en dur sauf la règle elle-même, assumée comme règle de la maison ». Voir §3.1 pour la règle en vigueur. Techniquement :
+
+- `DayVoteQueue.buildVoteOrder(ctx)` exclut `ctx.state.dayVote.tiedIds` de l'ordre de vote quand `round >= 2`.
+- `VoteManager.resolveRepeatedTie(ctx, topIds)` ne fait plus qu'une chose : ne déclarer aucune élimination. Plus de paramètre `rng`, plus de switch `REPEAT_DEFENSE/RANDOM/CHEF_DECIDES/ADMIN_DECIDES`.
+- `GameEngine.startDayVoteQueueOrTally()` (nouveau) gère le cas limite où tous les joueurs vivants restants sont des candidats à égalité (queue de vote vide) en dépouillant immédiatement au lieu de rester bloqué en attente de votants qui n'existent plus.
+
+### 11.3 Auto-fermeture des parties inactives
+
+Voir §11.1 pour le mécanisme. Démarré une seule fois au boot serveur (`startIdleCleanupSweep(io)`, `apps/server/src/index.ts`, juste après `registerSocketHandlers(io)`).
+
+### 11.4 Popup de reprise de partie à la connexion
+
+`gameRegistry.findOpenGamesForUser(userId)` (exclut les parties `ENDED`) exposé via `GET /api/account/open-games` (protégé par session). Côté web, `components/RejoinPrompt.tsx` (monté une seule fois dans `app/layout.tsx`, à l'intérieur de `AccountProvider`) l'interroge à la connexion, filtre la partie de la page courante (regex sur `usePathname()`) et les parties déjà rejetées cette session (`sessionStorage`), puis propose « Rejoindre »/« Plus tard » par partie.
+
+### 11.5 Bouton retour à l'accueil en fin de partie
+
+Purement présentation : `components/EndGamePanel.tsx`'s nouveau `NewGamePanel` (joueur, appelle `clearPlayerSession()` puis redirige) et un bouton dans `ControlBar` de `app/admin/[code]/page.tsx`, gated sur `phase === "ENDED"`. Aucun changement serveur/moteur.
+
+### 11.6 Aperçu en direct de la cible des loups
+
+Voir §11.1 pour le registre. `GameEngine.getWolfKillVotes()` (nouveau getter, retourne une copie défensive de `nightScratch.wolfVotes`) expose les votes **déjà confirmés** ; `WolfRoomStatePayload.previewVotes` (nouveau champ) expose les votes **en cours de sélection, pas encore confirmés**. Le client (`NightPromptPanel.tsx`, branche `KILL_VOTE`) fusionne les deux — confirmé toujours prioritaire sur prévisualisé pour un même loup — et affiche les non-confirmés en pulsant avec un « … ». Émis à chaque changement de sélection locale (`onPreview`, avant le clic « Confirmer »), effacé sur confirmation réelle et sur démontage du composant (loup qui change d'écran en pleine réflexion).
+
+### 11.7 Notes personnelles synchronisées
+
+Voir §11.1 pour le registre serveur. Côté web, `components/NotesButton.tsx` : bouton flottant, chargement paresseux à la première ouverture (`NOTES_GET`), sauvegarde debouncée 800 ms (`NOTES_SAVE`) + flush immédiat à la fermeture/démontage pour ne jamais perdre les dernières frappes sous la fenêtre de debounce.
+
+### 11.8 Nouveau rôle : Prêtre
+
+Rôle Village, pouvoir à usage unique, activable la nuit de son choix **dès la nuit 1**, ciblant n'importe quel joueur vivant **y compris lui-même**. Implémenté en suivant exactement le patron déjà établi par `roles/alien.ts` — **le seul autre rôle du jeu dont `applyNightAction` appelle `processDeaths` directement**, plutôt que d'agréger dans `nightScratch` pour une résolution différée dans `NightResolver.resolveNight()` (le chemin suivi par la Sorcière/le Salvateur/les loups). Ce patron convient à toute issue **binaire, connue immédiatement à la soumission de l'action** (vie/mort, pas de dépendance à ce que d'autres rôles font la même nuit) :
+
+```ts
+applyNightAction(ctx, actor, action) {
+  // ... valider l'action ...
+  const hitWolf = ROLE_METADATA[target.roleId].team === "LOUPS";
+  if (hitWolf) processDeaths(ctx, [{ playerId: target.id, cause: "..." }]);
+  else processDeaths(ctx, [{ playerId: actor.id, cause: "..." }]); // inclut le cas où target === actor
+}
+```
+
+Parce que la mort passe par `processDeaths` (le même chemin universel que toute autre mort — voir `DeathQueue.ts`), la révélation de mort standard s'applique automatiquement (rôle rendu public, cause toujours réservée à l'admin) et le vol par le Loup Vert fonctionne aussi automatiquement (`engine/LoupVert.ts`'s canal de vol générique rejoue `buildNightPrompt`/`applyNightAction` du rôle volé tel quel, contre l'objet joueur de la victime dépouillée) — **aucun cas particulier écrit nulle part pour ce rôle**, conformément au principe d'architecture générique (§16 de `FEATURES.md`). Le pouvoir à usage unique est gardé par un booléen simple sur `InternalPlayer` (`pretreShotUsed`), exactement le même patron que `sorciereHealUsed`/`sorcierePoisonUsed`/`barbiePowerUsed` — `buildNightPrompt` retourne `null` une fois utilisé, plutôt que de gater via `isActiveOnNight` (qui reste `true` toute la partie, pour rester éligible au vol du Loup Vert même après usage... **attention** : en pratique un Loup Vert ne peut voler un pouvoir déjà dépensé de façon utile, puisque `buildStolenPowerPrompt` rejoue `buildNightPrompt` contre le même `pretreShotUsed`).
+
+---
+
+## 12. Où trouver quoi (index rapide)
 
 | Je cherche... | Fichier |
 |---|---|
@@ -263,9 +330,12 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 | Ajouter un champ au profil/historique | `apps/server/prisma/schema.prisma` → `apps/server/src/db/persistence.ts` → `apps/server/src/http/accountRoutes.ts` → page Next.js correspondante |
 | Ajouter/ajuster une statistique dérivée | `apps/server/src/stats/deriveStats.ts` (calculs purs, testés) → `apps/server/src/db/persistence.ts` (glue Prisma) → `apps/web/src/app/profile/page.tsx` |
 | Ajuster la formule de rating / performance / coefficients de rôle | `packages/rating/src/*.ts` (tout est pur et testé ici) — jamais dans `apps/server/src/rating/applyRating.ts`, qui ne fait que la glue Prisma |
-| Ajouter/ajuster une vraie formule de performance par rôle | `packages/rating/src/performance.ts`'s `PERFORMANCE_SCORERS` — lit `GameEvent[]` (§3.7), déjà rempli pour 9 rôles |
+| Ajouter/ajuster une vraie formule de performance par rôle | `packages/rating/src/performance.ts`'s `PERFORMANCE_SCORERS` — lit `GameEvent[]` (§3.7), déjà rempli pour 10 rôles |
 | Ajouter un nouveau type d'événement au journal | `packages/shared/src/gameEvents.ts`'s `GameEvent` union, puis `ctx.recordEvent(...)` au bon endroit côté moteur — voir §3.7 |
 | Ajouter un nouveau badge | `apps/server/src/badges/deriveBadges.ts`'s `BADGE_REGISTRY` — une entrée, jamais de migration (§3.7) |
 | Ajouter une catégorie de classement | `apps/server/src/db/persistence.ts`'s `getLeaderboard()`/`LEADERBOARD_CATEGORIES` (§3.7) |
+| Ajouter un rôle avec un pouvoir de nuit binaire vie/mort (comme Prêtre/Alien) | `roles/alien.ts` ou `roles/pretre.ts` comme gabarit — `applyNightAction` appelle `processDeaths` directement, voir §11.8 |
+| Ajouter une feature qui a besoin d'un petit état serveur temporaire (pas persisté, pas dans le moteur) | Gabarit : `apps/server/src/socket/wolfTargetPreview.ts` ou `apps/server/src/notes/notesRegistry.ts` — voir §11.1 |
+| Changer les seuils de fermeture automatique des parties inactives | `apps/server/src/socket/idleCleanup.ts` (`IDLE_LOBBY_MS`/`IDLE_ENDED_MS`/`IDLE_ABANDONED_MS`) — voir §11.3 |
 | Modifier l'infra AWS | `infra/aws/*.tf` — **toujours relire le plan avant d'approuver** |
 | Comprendre le cahier de charge original et ce qu'il reste à faire | `FEATURES.md` |
