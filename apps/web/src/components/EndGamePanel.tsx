@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { EndGameStats, MvpResultPayload, MvpStatePayload, ReplayRequestResult } from "@loupgarou/shared";
 import { SOCKET_EVENTS } from "@loupgarou/shared";
 import { emitWithAck } from "@/lib/socket";
-import { saveAdminSession, savePlayerSession } from "@/lib/session";
+import { clearPlayerSession, saveAdminSession, savePlayerSession } from "@/lib/session";
 import { RoleCard } from "./RoleCard";
 import { CountdownTimer } from "./CountdownTimer";
 
@@ -52,7 +52,35 @@ export function EndGamePanel({ stats, myPlayerId, mvpState, mvpResult, gameCode,
           myNickname={s.roleReveal.find((r) => r.playerId === myPlayerId)?.nickname ?? ""}
         />
       )}
+      <NewGamePanel />
     </section>
+  );
+}
+
+/**
+ * Separate from "Rejouer" (ReplayPanel above, host-only, carries the exact
+ * same roster/config into a new game): this is for anyone — host or not —
+ * who's done with this table and wants to type in a completely different
+ * game code, e.g. to join a friend's table next. Clears this browser's
+ * player session for the game that just ended first, so /join's account-
+ * based flow starts clean rather than carrying over a stale reconnectToken
+ * for a game that's over.
+ */
+function NewGamePanel() {
+  const router = useRouter();
+  return (
+    <div className="text-center pt-1">
+      <button
+        type="button"
+        className="btn-secondary text-sm px-4 py-2"
+        onClick={() => {
+          clearPlayerSession();
+          router.push("/");
+        }}
+      >
+        🏠 Retour à l&apos;accueil
+      </button>
+    </div>
   );
 }
 

@@ -174,6 +174,15 @@ function ControlBar({ admin }: { admin: AdminStatePayload }) {
           🏅 Forcer le résultat MVP
         </button>
       )}
+      {admin.state.phase === "ENDED" && (
+        // Distinct from the player-side "Rejouer" (same roster/config) —
+        // this is the admin's own way back to create/manage a completely
+        // different game once this table's done, without leaving the tab
+        // sitting on a dead dashboard.
+        <a className="btn-secondary" href="/">
+          🏠 Retour à l&apos;accueil
+        </a>
+      )}
     </div>
   );
 }
