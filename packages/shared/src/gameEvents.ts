@@ -133,6 +133,20 @@ export type GameEvent =
       targetId: string;
     }
   | {
+      /** Recorded in roles/pretre.ts, at the moment his one-shot power is
+       * actually used (whichever night he chooses) — captures the target's
+       * real role so Performance Score v2 can grade the shot without
+       * cross-referencing anything else. `hitWolf` false means the target
+       * was left untouched and `actorId` himself is the one who died — see
+       * roles/pretre.ts's doc comment for the full house rule. */
+      type: "PRETRE_SHOT";
+      night: number;
+      actorId: string;
+      targetId: string;
+      targetRoleId: RoleId;
+      hitWolf: boolean;
+    }
+  | {
       /** Recorded in DeathQueue.processDeaths, at the exact point Mowgli's
        * roleId flips to LOUP_GAROU (his "father"'s death) — see
        * InternalPlayer.mowgliFatherId/mowgliTransformed. `actorId` is

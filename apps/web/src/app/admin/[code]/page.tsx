@@ -441,8 +441,8 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
 }
 
 // Canonical night-step order = packages/game-engine's own nightPriority
-// order (Mowgli, Salvateur, Alien, Voyante, the wolf pack, Sorcière,
-// Corbeau) — DEFAULT_NIGHT_STEP_DURATIONS' key insertion order already IS
+// order (Mowgli, Salvateur, Prêtre, Alien, Voyante, the wolf pack,
+// Sorcière, Corbeau) — DEFAULT_NIGHT_STEP_DURATIONS' key insertion order already IS
 // that order (see its own doc comment in packages/shared/src/types.ts), so
 // reusing it here means this file never needs its own separate copy of
 // nightPriority values just to render a sensible default list.

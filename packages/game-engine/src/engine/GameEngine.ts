@@ -186,6 +186,7 @@ export class GameEngine {
       alienVillageChancesLeft: 2,
       alienWolfChancesLeft: 1,
       alienLastGuessResult: null,
+      pretreShotUsed: false,
     };
     this.state.players.set(player.id, player);
     this.state.playerOrder.push(player.id);

@@ -20,6 +20,9 @@ const ACTION_LABELS: Record<string, string> = {
   CHOOSE_FATHER: "Choisissez en secret le joueur qui sera votre « père ».",
   ALIEN_GUESS: "Devinez le rôle exact d'un joueur (facultatif).",
   ALIEN_GUESS_MANDATORY: "Vous avez précipité la nuit : vous devez deviner le rôle d'un joueur cette nuit.",
+  PRETRE_SHOOT:
+    "Vous pouvez tirer sur un joueur de votre choix, y compris vous-même — une seule fois dans toute la partie. " +
+    "Si c'est un loup, il meurt et vous continuez de jouer. Sinon, c'est vous qui mourrez. Vous pouvez aussi garder votre pouvoir pour une nuit future.",
 };
 
 export function NightPromptPanel({
@@ -128,6 +131,39 @@ export function NightPromptPanel({
             Ne rien tenter cette nuit
           </button>
         )}
+        <CountdownTimer endsAt={prompt.deadlineAt} />
+      </div>
+    );
+  }
+
+  if (prompt.actionType === "PRETRE_SHOOT") {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <p className="text-sm text-night-100/80">{ACTION_LABELS.PRETRE_SHOOT}</p>
+        <PlayerList players={eligible} selectable selectedId={selected} onSelect={setSelected} />
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="btn-primary disabled:opacity-40"
+            disabled={!selected}
+            onClick={() => {
+              if (!selected) return;
+              onSubmit("PRETRE_SHOOT", selected);
+              const target = eligible.find((p) => p.id === selected);
+              setSentChoice({ label: `Tir sur ${target?.nickname ?? "?"}` });
+            }}
+          >
+            🔫 Tirer{selected ? ` sur ${eligible.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => {
+              onSubmit("SKIP");
+              setSentChoice({ label: "Pouvoir gardé en réserve" });
+            }}
+          >
+            Ne rien faire cette nuit
+          </button>
+        </div>
         <CountdownTimer endsAt={prompt.deadlineAt} />
       </div>
     );

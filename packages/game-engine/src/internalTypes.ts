@@ -67,6 +67,10 @@ export interface InternalPlayer {
   alienWolfChancesLeft: number;
   /** Private feedback for his own client after his most-recent guess this connection — consumed once read, never broadcast. */
   alienLastGuessResult: "CORRECT" | "WRONG" | null;
+
+  // --- Prêtre (see roles/pretre.ts) ---
+  /** One-shot power, once per game — but unlike Barbie's, usable from night 1 and any night after, at the holder's own discretion. */
+  pretreShotUsed: boolean;
 }
 
 export interface NightActionSubmitted {

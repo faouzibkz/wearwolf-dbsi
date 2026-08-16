@@ -184,6 +184,19 @@ export function corbeauPerformanceScore(ctx: PerformanceContext): number {
 }
 
 /**
+ * A landed shot on a wolf is the intended, high-value outcome (the target
+ * dies, the Prêtre survives); a miss is the costliest single mistake in the
+ * game — it's his own life, not a shared potion or a spendable "chance"
+ * like the Alien's. Weighted heavily since — same as the Alien — this
+ * one-shot choice is essentially his whole game.
+ */
+export function pretrePerformanceScore(ctx: PerformanceContext): number {
+  const shots = eventsOfType(ctx.events, "PRETRE_SHOT");
+  const usefulness = shots.length === 0 ? null : shots.filter((e) => e.hitWolf).length / shots.length;
+  return blendUsefulness(genericPerformanceScore(ctx), usefulness, 0.4);
+}
+
+/**
  * Per-role overrides (cahier de charge section 8: "Le système doit
  * permettre de créer un calcul personnalisé pour chaque rôle"). Every role
  * with a night/day action whose outcome the event journal captures now has
@@ -203,6 +216,7 @@ export const PERFORMANCE_SCORERS: Partial<Record<RoleId, PerformanceScorer>> = {
   CHASSEUR: chasseurPerformanceScore,
   BARBIE: barbiePerformanceScore,
   CORBEAU: corbeauPerformanceScore,
+  PRETRE: pretrePerformanceScore,
 };
 
 export function computePerformanceScore(ctx: PerformanceContext): number {

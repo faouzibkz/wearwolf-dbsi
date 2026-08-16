@@ -12,6 +12,7 @@ import { corbeauRole } from "./corbeau";
 import { mowgliRole } from "./mowgli";
 import { barbieRole } from "./barbie";
 import { alienRole } from "./alien";
+import { pretreRole } from "./pretre";
 
 /**
  * Single registration point for every role module. This is the ONLY file
@@ -30,6 +31,7 @@ export const ROLE_REGISTRY: Record<RoleId, RoleModule> = {
   MOWGLI: mowgliRole,
   BARBIE: barbieRole,
   ALIEN: alienRole,
+  PRETRE: pretreRole,
 };
 
 export function getRolesByNightPriority(): RoleModule[] {

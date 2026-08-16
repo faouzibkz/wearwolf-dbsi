@@ -16,6 +16,7 @@ export const ROLE_EMOJI: Record<RoleId, string> = {
   MOWGLI: "🌿",
   BARBIE: "💃",
   ALIEN: "👽",
+  PRETRE: "✝️",
 };
 
 export function RoleCard({

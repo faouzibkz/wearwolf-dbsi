@@ -34,6 +34,7 @@ export const DEFAULT_ROLE_DIFFICULTY: Partial<Record<RoleId, number>> = {
   MOWGLI: 1.2,
   BARBIE: 1.3,
   ALIEN: 1.35,
+  PRETRE: 1.2,
 };
 
 /** Neutral coefficient used for any role with no explicit entry (see doc comment above). */

@@ -23,6 +23,7 @@ export const ROLE_IDS = [
   "MOWGLI",
   "BARBIE",
   "ALIEN",
+  "PRETRE",
 ] as const;
 
 export type RoleId = (typeof ROLE_IDS)[number];
@@ -176,6 +177,7 @@ export const DEFAULT_NIGHT_STEP_DURATION_SECONDS = 20;
 export const DEFAULT_NIGHT_STEP_DURATIONS: Partial<Record<RoleId, number>> = {
   MOWGLI: 15,
   SALVATEUR: 15,
+  PRETRE: 20,
   ALIEN: 20,
   VOYANTE: 15,
   LOUP_GAROU: 30,
@@ -381,6 +383,17 @@ export const ROLE_METADATA: Record<RoleId, RoleDefinitionMeta> = {
       "rôle d'un joueur : juste, il meurt sur-le-champ ; faux, il perd une chance (2 contre le village, " +
       "1 seule contre les loups) — la dernière chance perdue le tue. Il peut aussi précipiter la nuit " +
       "en pleine discussion de jour, mais s'il le fait, deviner devient obligatoire cette nuit-là.",
+    hasNightAction: true,
+    hasDeathTrigger: false,
+  },
+  PRETRE: {
+    id: "PRETRE",
+    displayName: "Prêtre",
+    team: "VILLAGE",
+    shortDescription:
+      "Une seule fois dans la partie, la nuit de son choix (dès la nuit 1), peut tirer sur un joueur " +
+      "de son choix, y compris lui-même. Si c'est un loup, il meurt et le Prêtre continue de jouer. " +
+      "Sinon, c'est le Prêtre — et lui seul — qui meurt ; la cible ne risque rien.",
     hasNightAction: true,
     hasDeathTrigger: false,
   },

@@ -68,6 +68,7 @@ const NIGHT_WAKE_TEXT: Partial<Record<RoleId, string>> = {
   LOUP_VERT: "🐺 Le Loup vert se réveille…",
   SORCIERE: "🧙‍♀️ La Sorcière se réveille…",
   CORBEAU: "🐦‍⬛ Le Corbeau se réveille…",
+  PRETRE: "✝️ Le Prêtre se réveille…",
 };
 
 const WOLF_TEAM_ROLE_IDS: RoleId[] = ["LOUP_GAROU", "LOUP_BLANC", "LOUP_VERT"];

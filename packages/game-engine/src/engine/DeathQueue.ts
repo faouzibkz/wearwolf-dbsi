@@ -11,6 +11,8 @@ const CAUSE_LABELS: Record<string, string> = {
   ALIEN_OUT_OF_CHANCES: "mort — l'Alien n'avait plus de chance",
   BARBIE_REVEAL_WOLF: "démasqué par Barbie",
   BARBIE_REVEAL_MISFIRE: "emporté par le pouvoir de Barbie",
+  PRETRE_SHOT_WOLF: "abattu par le Prêtre",
+  PRETRE_MISFIRE: "mort — le Prêtre s'est trompé de cible",
   ADMIN_KILL: "retiré de la partie par l'administrateur",
 };
 
