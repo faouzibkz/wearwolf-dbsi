@@ -189,7 +189,9 @@ UserBadge       — quels badges un compte a débloqués, et quand (§17.4c). La
                    simple string, pas une clé étrangère vers une table de définitions qui n'existe pas.
 ```
 
-**⚠️ Migration en attente** : `UserBadge` et les nouvelles colonnes `PlayerRecord` ci-dessus ont été ajoutées à `schema.prisma` mais **pas encore poussées vers une base réelle** (sandbox sans accès réseau pour le client Prisma généré — voir §9). Lancer `npx prisma db push` avant le prochain redémarrage du serveur.
+**Migration locale : automatique, rien à faire.** `docker-compose.yml`'s service `server` lance `npx prisma db push --skip-generate --accept-data-loss && npx tsx src/index.ts` comme commande de démarrage — donc **chaque** `docker compose up` (donc chaque lancement de `start-app.ps1`) pousse déjà tout `schema.prisma` (y compris `UserBadge` et les colonnes `PlayerRecord` du §17.4c) vers la base Postgres locale avant même que le serveur ne démarre. Si le conteneur `server` a démarré sans erreur, le schéma local EST à jour — pas de commande manuelle à lancer en local.
+
+**⚠️ Ce qui reste réellement en attente : la base AWS RDS de production**, complètement séparée de la base Postgres locale ci-dessus. `.deploy-marker` (racine du repo) pointe vers le dernier commit effectivement déployé sur AWS — si ce marqueur est antérieur à un commit qui touche `schema.prisma`, la RDS de prod n'a pas ce changement. Voir §8 (`deploy-manual.ps1` bloque automatiquement dans ce cas, et note sur l'usage réel d'AWS aujourd'hui — probablement plus la voie principale, à confirmer avec l'utilisateur).
 
 Note importante : **le schéma Prisma n'accepte que les commentaires `//`/`///`**, pas `/* */` — une vraie erreur de build a été introduite puis corrigée pendant cette session (voir §8, Pièges connus).
 
@@ -234,6 +236,8 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 ---
 
 ## 8. Déploiement (résumé — détails complets dans README.md §"Deploying to AWS")
+
+> **⚠️ À confirmer avec l'utilisateur, pas une certitude technique** : l'usage réel aujourd'hui (16 août 2026) semble être `start-app.ps1`/`stop-app.ps1` — Docker Compose local + Tailscale Funnel pour exposer l'app à internet le temps d'une soirée de jeu — plutôt que le déploiement AWS ECS décrit ci-dessous. L'infra Terraform et `deploy-manual.ps1` restent dans le repo et *devraient* toujours fonctionner (rien ne les a supprimés), mais aucune session Claude n'a d'accès AWS pour vérifier si le service ECS tourne encore réellement ou a été arrêté/décommissionné. **Ne pas supposer qu'AWS est la cible de déploiement active sans le confirmer avec l'utilisateur d'abord.**
 
 - **Infra** : AWS ECS Fargate (2 services : `web` et `server`, chacun `desired_count=1` — le serveur garde l'état de jeu en mémoire, pas de scaling horizontal possible), RDS Postgres privé (pas d'accès public), ALB unique avec routage **par chemin** (`/socket.io/*` et `/api/*` → serveur ; tout le reste → web Next.js), Route53 + ACM pour le domaine `loupgarou-dbsi.com`, Secrets Manager pour `DATABASE_URL`/`ADMIN_SECRET`/`AUTH_JWT_SECRET`.
 - **Terraform** (`infra/aws/*.tf`) gère toute l'infra. **Piège connu et déjà rencontré deux fois** : `deploy-manual.ps1`/CI enregistrent de nouvelles révisions de task definition directement via l'AWS CLI, hors du state Terraform. Un `terraform apply` naïf peut donc faire régresser un service vers une ancienne révision. Solution appliquée : `lifecycle { ignore_changes = [task_definition] }` sur **les deux** `aws_ecs_service` (web et server). **Toujours relire un plan Terraform ligne par ligne avant de taper `yes`**, en particulier tout changement sur `task_definition`.
