@@ -49,7 +49,7 @@ Les **phases** (`packages/shared/src/types.ts`, `PHASES`) : `LOBBY → CHEF_CAND
 
 Chaque **rôle** (`packages/game-engine/src/roles/*.ts`) est un `RoleModule` : une nuit priority (ordre de résolution), un `shortDescription`, et sa propre logique d'action de nuit si applicable. Le seul fichier à modifier pour ajouter un rôle est `roles/registry.ts` (le registre) plus le nouveau module lui-même — jamais `GameEngine.ts`.
 
-Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_GAROU, LOUP_BLANC, LOUP_VERT, SORCIERE, VOYANTE, SALVATEUR, CHASSEUR, CORBEAU, MOWGLI, BARBIE, ALIEN`. Chaque rôle a des métadonnées génériques dans `ROLE_METADATA` (équipe, description, a-t-il une action de nuit, a-t-il un déclencheur à la mort) — c'est cette table, jamais un `if (role === ...)`, qui pilote l'UI et (désormais) le calcul d'équipe pour les stats.
+Rôles actuels (`ROLE_IDS`, `packages/shared/src/types.ts`) : `VILLAGEOIS, LOUP_GAROU, LOUP_BLANC, LOUP_VERT, SORCIERE, VOYANTE, SALVATEUR, CHASSEUR, CORBEAU, MOWGLI, BARBIE, ALIEN, PRETRE`. Chaque rôle a des métadonnées génériques dans `ROLE_METADATA` (équipe, description, a-t-il une action de nuit, a-t-il un déclencheur à la mort) — c'est cette table, jamais un `if (role === ...)`, qui pilote l'UI et (désormais) le calcul d'équipe pour les stats.
 
 ### 3.2 Modules clés
 
