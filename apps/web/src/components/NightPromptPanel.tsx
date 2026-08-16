@@ -51,6 +51,8 @@ export function NightPromptPanel({
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [sentChoice, setSentChoice] = useState<{ label: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const eligible = players.filter((p) => prompt.eligibleTargetIds.includes(p.id));
 
   // Best-effort: if this prompt disappears (submitted, or the night ended
@@ -60,6 +62,36 @@ export function NightPromptPanel({
     return () => onPreview?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Every action below funnels through here instead of calling onSubmit
+  // directly. onSubmit is async (it round-trips an ack to the server) —
+  // calling it fire-and-forget and flipping to the "Action envoyée"
+  // confirmation screen immediately, regardless of whether the ack ever
+  // came back ok, used to mean a rejected or dropped submission (a stale
+  // connection, a network blip, the server throwing) looked EXACTLY like a
+  // successful one: the player saw "envoyée" and moved on while the server
+  // never actually recorded anything. For a one-shot power like the
+  // Prêtre's this is silent and irreversible — the reported "his power
+  // just doesn't work" bug. Now the confirmation screen only ever appears
+  // once the ack has actually come back ok; a failure surfaces an error
+  // and leaves the picker up so the player can retry.
+  async function submitAndConfirm(
+    actionType: string,
+    targetId: string | undefined,
+    guessedRoleId: RoleId | undefined,
+    label: string,
+  ) {
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await onSubmit(actionType, targetId, guessedRoleId);
+      setSentChoice({ label });
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Échec de l'envoi. Réessayez.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   if (sentChoice) {
     return (
@@ -105,28 +137,32 @@ export function NightPromptPanel({
               {ctx.guessableRoleIds.map((roleId) => (
                 <button
                   key={roleId}
-                  className="btn-secondary text-sm"
-                  onClick={() => {
-                    onSubmit("ALIEN_GUESS", target.id, roleId);
-                    setSentChoice({ label: `${target.nickname} → ${ROLE_METADATA[roleId].displayName}` });
-                  }}
+                  className="btn-secondary text-sm disabled:opacity-40"
+                  disabled={submitting}
+                  onClick={() =>
+                    submitAndConfirm(
+                      "ALIEN_GUESS",
+                      target.id,
+                      roleId,
+                      `${target.nickname} → ${ROLE_METADATA[roleId].displayName}`,
+                    )
+                  }
                 >
                   {ROLE_METADATA[roleId].displayName}
                 </button>
               ))}
             </div>
-            <button className="btn-secondary text-xs" onClick={() => setSelected(null)}>
+            <button className="btn-secondary text-xs" disabled={submitting} onClick={() => setSelected(null)}>
               ← Changer de cible
             </button>
           </>
         )}
+        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
         {!ctx.mustGuess && (
           <button
-            className="btn-secondary w-full text-sm"
-            onClick={() => {
-              onSubmit("SKIP");
-              setSentChoice({ label: "Aucune tentative cette nuit" });
-            }}
+            className="btn-secondary w-full text-sm disabled:opacity-40"
+            disabled={submitting}
+            onClick={() => submitAndConfirm("SKIP", undefined, undefined, "Aucune tentative cette nuit")}
           >
             Ne rien tenter cette nuit
           </button>
@@ -141,25 +177,23 @@ export function NightPromptPanel({
       <div className="space-y-4 animate-fade-in">
         <p className="text-sm text-night-100/80">{ACTION_LABELS.PRETRE_SHOOT}</p>
         <PlayerList players={eligible} selectable selectedId={selected} onSelect={setSelected} />
+        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
         <div className="flex flex-wrap gap-2">
           <button
             className="btn-primary disabled:opacity-40"
-            disabled={!selected}
+            disabled={!selected || submitting}
             onClick={() => {
               if (!selected) return;
-              onSubmit("PRETRE_SHOOT", selected);
               const target = eligible.find((p) => p.id === selected);
-              setSentChoice({ label: `Tir sur ${target?.nickname ?? "?"}` });
+              submitAndConfirm("PRETRE_SHOOT", selected, undefined, `Tir sur ${target?.nickname ?? "?"}`);
             }}
           >
             🔫 Tirer{selected ? ` sur ${eligible.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
           </button>
           <button
-            className="btn-secondary"
-            onClick={() => {
-              onSubmit("SKIP");
-              setSentChoice({ label: "Pouvoir gardé en réserve" });
-            }}
+            className="btn-secondary disabled:opacity-40"
+            disabled={submitting}
+            onClick={() => submitAndConfirm("SKIP", undefined, undefined, "Pouvoir gardé en réserve")}
           >
             Ne rien faire cette nuit
           </button>
@@ -183,14 +217,15 @@ export function NightPromptPanel({
             "Les loups n'ont attaqué personne d'identifiable cette nuit."
           )}
         </p>
+        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
         <div className="flex flex-wrap gap-2">
           {ctx.canHeal && (
             <button
-              className="btn-primary"
-              onClick={() => {
-                onSubmit("HEAL");
-                setSentChoice({ label: `Potion de guérison sur ${attacked?.nickname ?? "la victime"}` });
-              }}
+              className="btn-primary disabled:opacity-40"
+              disabled={submitting}
+              onClick={() =>
+                submitAndConfirm("HEAL", undefined, undefined, `Potion de guérison sur ${attacked?.nickname ?? "la victime"}`)
+              }
             >
               🧪 Utiliser la potion de guérison
             </button>
@@ -199,19 +234,17 @@ export function NightPromptPanel({
             <ExpandablePicker
               label="☠️ Utiliser la potion de poison"
               players={eligible}
+              disabled={submitting}
               onPick={(id) => {
-                onSubmit("POISON", id);
                 const target = eligible.find((p) => p.id === id);
-                setSentChoice({ label: `Potion de poison sur ${target?.nickname ?? "?"}` });
+                submitAndConfirm("POISON", id, undefined, `Potion de poison sur ${target?.nickname ?? "?"}`);
               }}
             />
           )}
           <button
-            className="btn-secondary"
-            onClick={() => {
-              onSubmit("SKIP");
-              setSentChoice({ label: "Aucune action" });
-            }}
+            className="btn-secondary disabled:opacity-40"
+            disabled={submitting}
+            onClick={() => submitAndConfirm("SKIP", undefined, undefined, "Aucune action")}
           >
             Ne rien faire
           </button>
@@ -282,15 +315,15 @@ export function NightPromptPanel({
             ✕ Annuler ma sélection
           </button>
         )}
+        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
         <div className="flex gap-2">
           <button
             className="btn-primary disabled:opacity-40"
-            disabled={!selected}
+            disabled={!selected || submitting}
             onClick={() => {
               if (!selected) return;
-              onSubmit("KILL_VOTE", selected);
               const target = eligible.find((p) => p.id === selected);
-              setSentChoice({ label: target?.nickname ?? "?" });
+              submitAndConfirm("KILL_VOTE", selected, undefined, target?.nickname ?? "?");
             }}
           >
             Confirmer{selected ? ` : ${eligible.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
@@ -305,15 +338,15 @@ export function NightPromptPanel({
     <div className="space-y-4 animate-fade-in">
       <p className="text-sm text-night-100/80">{ACTION_LABELS[prompt.actionType] ?? "Choisissez une cible."}</p>
       <PlayerList players={eligible} selectable selectedId={selected} onSelect={setSelected} />
+      {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
       <div className="flex gap-2">
         <button
           className="btn-primary disabled:opacity-40"
-          disabled={!selected}
+          disabled={!selected || submitting}
           onClick={() => {
             if (!selected) return;
-            onSubmit(prompt.actionType, selected);
             const target = eligible.find((p) => p.id === selected);
-            setSentChoice({ label: target?.nickname ?? "?" });
+            submitAndConfirm(prompt.actionType, selected, undefined, target?.nickname ?? "?");
           }}
         >
           Confirmer{selected ? ` : ${eligible.find((p) => p.id === selected)?.nickname ?? ""}` : ""}
@@ -329,15 +362,17 @@ function ExpandablePicker({
   label,
   players,
   onPick,
+  disabled,
 }: {
   label: string;
   players: PlayerPublic[];
   onPick: (id: string) => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <button className="btn-secondary" onClick={() => setOpen(true)}>
+      <button className="btn-secondary disabled:opacity-40" disabled={disabled} onClick={() => setOpen(true)}>
         {label}
       </button>
     );

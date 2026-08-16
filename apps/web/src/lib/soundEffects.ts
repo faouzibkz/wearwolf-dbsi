@@ -89,6 +89,25 @@ export function playChefFanfare(enabled: boolean): void {
 }
 
 /**
+ * It's this player's turn to vote: a short, attention-grabbing two-note
+ * ping. Distinct from playChefFanfare's three-note triumphant chime — this
+ * needs to read as "look at your screen now", not "congratulations",
+ * because the day vote is a strict one-at-a-time turn queue (see
+ * DayVoteQueue.ts) with a real per-voter timeout that silently skips
+ * whoever doesn't act in time. Without an audible cue, a player not staring
+ * at their screen the instant their turn arrives has no way to know it's
+ * their turn until it's already over.
+ */
+export function playYourTurnChime(enabled: boolean): void {
+  if (!enabled) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  tone(ctx, 740, now, 0.16, "triangle", 0.16);
+  tone(ctx, 988, now + 0.12, 0.22, "triangle", 0.16);
+}
+
+/**
  * Game over: a short arpeggio, brighter for the village, darker for the
  * wolves. `winner` is typed as the full `Team` (which also includes
  * "SOLO" for the Alien) even though the Alien never actually wins — see

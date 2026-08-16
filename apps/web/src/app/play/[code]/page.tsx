@@ -32,6 +32,7 @@ import {
   playMorningRooster,
   playNightHowl,
   playVictoryFanfare,
+  playYourTurnChime,
 } from "@/lib/soundEffects";
 import { RoleCard, ROLE_EMOJI } from "@/components/RoleCard";
 import { PlayerList } from "@/components/PlayerList";
@@ -134,6 +135,7 @@ export default function PlayPage() {
   const soundEnabledRef = useRef<boolean>(true);
   const prevPhaseRef = useRef<GameStatePublic["phase"] | null>(null);
   const prevRoleRef = useRef<RoleId | null>(null);
+  const prevDayVoteVoterRef = useRef<string | null>(null);
 
   useEffect(() => {
     const stored = loadPlayerSession(code);
@@ -194,6 +196,28 @@ export default function PlayPage() {
       } else if (!signature) {
         announcedDeathsRef.current = "";
       }
+
+      // Day vote is a strict one-voter-at-a-time turn queue (DayVoteQueue.ts)
+      // with a real per-voter timeout that silently skips anyone who
+      // doesn't act in time — a player not looking at their screen the
+      // instant their turn starts could previously miss it with zero
+      // warning ("sometimes can't vote" feedback). Fire an audible +
+      // in-app cue exactly once, the instant the turn actually becomes
+      // theirs (not on every GAME_STATE re-broadcast while it's still
+      // their turn).
+      if (
+        s.phase === "DAY_VOTE" &&
+        s.dayVoteCurrentVoterId &&
+        s.dayVoteCurrentVoterId === stored!.playerId &&
+        s.dayVoteCurrentVoterId !== prevDayVoteVoterRef.current
+      ) {
+        playYourTurnChime(soundEnabledRef.current);
+        setNotifications((prev) => [
+          ...prev.slice(-4),
+          { type: "INFO", message: "🗳️ C'est votre tour de voter !" },
+        ]);
+      }
+      prevDayVoteVoterRef.current = s.dayVoteCurrentVoterId ?? null;
     });
     socket.on(SOCKET_EVENTS.ROLE_ASSIGNED, (payload: RoleAssignedPayload) => {
       // A role change mid-game (currently only: Loup Vert stealing this
@@ -439,8 +463,14 @@ export default function PlayPage() {
           below): once dead, a player keeps this chat available for the
           rest of the game, on top of whatever phase-specific view they're
           also seeing (read-only from here on — the "(spectateur)" label
-          next to their name above already reflects this). */}
-      {!me?.isAlive && afterlifeRoom && <AfterlifeChat room={afterlifeRoom} messages={afterlifeMessages} />}
+          next to their name above already reflects this). Withheld while a
+          death-triggered action is still pending (Chasseur's revenge shot,
+          Chef succession) — Afterlife's allPlayers payload includes every
+          real roleId, so a Chasseur must finish choosing his target BEFORE
+          seeing that, not while/before he decides. */}
+      {!me?.isAlive && afterlifeRoom && !chasseurTargets && !chefSuccessionTargets && (
+        <AfterlifeChat room={afterlifeRoom} messages={afterlifeMessages} />
+      )}
 
       {/* Feature 7 — private, server-synced notes, available to every
           player through every phase of the whole game. Hidden once the
@@ -528,6 +558,7 @@ function PhaseView({
   // makes the intent obvious).
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmingAlienNightfall, setConfirmingAlienNightfall] = useState(false);
+  const [dayVoteError, setDayVoteError] = useState<string | null>(null);
 
   if (chasseurTargets) {
     return (
@@ -1111,7 +1142,9 @@ function PhaseView({
       const isMyTurn = Boolean(me?.isAlive) && me?.id === currentId;
 
       return (
-        <section className="card space-y-3">
+        <section
+          className={`card space-y-3 ${isMyTurn ? "ring-2 ring-gold-400 animate-pulse-slow" : ""}`}
+        >
           <h2 className="font-display text-lg text-gold-300">🗳️ Vote du village</h2>
 
           {currentVoter && (
@@ -1131,6 +1164,8 @@ function PhaseView({
           </p>
           {!me?.isAlive && <p className="text-xs text-night-100/60 text-center">Vous êtes spectateur(trice).</p>}
 
+          {dayVoteError && <p className="text-xs text-blood-400 text-center">{dayVoteError}</p>}
+
           <LiveVoteList
             candidates={votable}
             allPlayers={state.players}
@@ -1139,8 +1174,17 @@ function PhaseView({
             myId={me?.id ?? null}
             interactive={isMyTurn}
             onSelect={async (targetId) => {
-              const { emitWithAck } = await import("@/lib/socket");
-              await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
+              setDayVoteError(null);
+              try {
+                const { emitWithAck } = await import("@/lib/socket");
+                await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
+              } catch (err) {
+                // Previously silent: a rejected/dropped vote (stale turn
+                // state, a network blip) left the player thinking they'd
+                // voted with no feedback at all — the reported "sometimes
+                // can't vote" behavior. Now it's visible and retryable.
+                setDayVoteError(err instanceof Error ? err.message : "Échec de l'envoi du vote. Réessayez.");
+              }
             }}
           />
 
