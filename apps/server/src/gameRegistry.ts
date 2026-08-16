@@ -17,6 +17,17 @@ class GameRegistry {
   private adminSocketByCode = new Map<string, string>();
   private hostTokenByCode = new Map<string, string>();
   /**
+   * Last time ANY socket action successfully touched this game (see
+   * touch(), called from requireGame() — the one chokepoint essentially
+   * every mutating handler in socket/handlers.ts already goes through, so
+   * this stays fresh with zero per-handler bookkeeping). Drives
+   * socket/idleCleanup.ts's sweep: a LOBBY nobody ever started, or an ENDED
+   * game nobody's looked at since its MVP vote, eventually gets purged
+   * instead of sitting in memory forever. See that module for the actual
+   * thresholds and phase-aware logic.
+   */
+  private lastActivityAt = new Map<string, number>();
+  /**
    * Which account (User.id) is behind each live engine player id. Kept
    * entirely here, in memory, server-side only — deliberately NOT stored on
    * GameEngine's own InternalPlayer, so the account/stats layer stays fully
@@ -32,6 +43,7 @@ class GameRegistry {
     this.games.set(engine.getCode(), engine);
     const hostToken = randomUUID();
     this.hostTokenByCode.set(engine.getCode(), hostToken);
+    this.lastActivityAt.set(engine.getCode(), Date.now());
     return { engine, hostToken };
   }
 
@@ -47,7 +59,41 @@ class GameRegistry {
   requireGame(code: string): GameEngine {
     const engine = this.get(code);
     if (!engine) throw new Error("Partie introuvable.");
+    this.touch(engine.getCode());
     return engine;
+  }
+
+  /** Marks a game as just-active — see lastActivityAt's doc comment. */
+  touch(code: string): void {
+    this.lastActivityAt.set(code.toUpperCase(), Date.now());
+  }
+
+  getLastActivityAt(code: string): number | undefined {
+    return this.lastActivityAt.get(code.toUpperCase());
+  }
+
+  /** Every currently-registered game code — used by idleCleanup's periodic sweep. */
+  codes(): string[] {
+    return [...this.games.keys()];
+  }
+
+  /**
+   * Fully purges a game: the engine itself, its admin socket / host token /
+   * activity bookkeeping, and every player-scoped map entry for players who
+   * were in it (same cleanup clearPlayerUserIds already does after history
+   * is durably written — reused here so an idle-swept game doesn't leave
+   * orphaned entries in those flat, cross-game maps either). Irreversible;
+   * callers (socket/idleCleanup.ts) are expected to have already notified
+   * connected clients before calling this.
+   */
+  remove(code: string): void {
+    const upper = code.toUpperCase();
+    const engine = this.games.get(upper);
+    if (engine) this.clearPlayerUserIds(engine.getPlayers().map((p) => p.id));
+    this.games.delete(upper);
+    this.adminSocketByCode.delete(upper);
+    this.hostTokenByCode.delete(upper);
+    this.lastActivityAt.delete(upper);
   }
 
   setAdminSocket(code: string, socketId: string): void {

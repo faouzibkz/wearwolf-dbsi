@@ -240,6 +240,14 @@ export default function PlayPage() {
     socket.on(SOCKET_EVENTS.NOTIFICATION, (payload: NotificationPayload) =>
       setNotifications((prev) => [...prev.slice(-4), payload]),
     );
+    // Server-side idle/abandoned sweep (see socket/idleCleanup.ts) just
+    // purged this game entirely — nothing left to reconnect to. Reuses the
+    // same full-screen `error` state as a failed reconnect, since the
+    // outcome for this tab is identical either way: show why, offer a way
+    // back to /join.
+    socket.on(SOCKET_EVENTS.GAME_CLOSED, (payload: { message: string }) => {
+      setError(payload.message);
+    });
     socket.on(SOCKET_EVENTS.GAME_ENDED, (payload: { stats: EndGameStats }) => {
       setEndStats(payload.stats);
       // Fresh game, fresh MVP vote - clear any leftover state from a
@@ -282,6 +290,7 @@ export default function PlayPage() {
       socket.off(SOCKET_EVENTS.AFTERLIFE_ROOM_STATE);
       socket.off(SOCKET_EVENTS.AFTERLIFE_CHAT_MESSAGE);
       socket.off(SOCKET_EVENTS.NOTIFICATION);
+      socket.off(SOCKET_EVENTS.GAME_CLOSED);
       socket.off(SOCKET_EVENTS.GAME_ENDED);
       socket.off(SOCKET_EVENTS.MVP_STATE);
       socket.off(SOCKET_EVENTS.MVP_RESULT);

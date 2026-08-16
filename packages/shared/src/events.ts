@@ -185,6 +185,14 @@ export const SOCKET_EVENTS = {
   // --- end game ---
   GAME_ENDED: "game:ended",
 
+  // Pushed to every socket in a game's room right before the server itself
+  // purges that game from gameRegistry (see socket/idleCleanup.ts) — either
+  // an empty LOBBY nobody ever started, an ENDED game long past its final
+  // MVP vote, or an in-progress game abandoned outright. Gives clients one
+  // last chance to show why before the game becomes unreachable (any
+  // further action on it will 404/error).
+  GAME_CLOSED: "game:closed",
+
   // --- instant replay: the original host, from their own player tab on
   // the end screen, can relaunch with the exact same roster + config (see
   // socket/replay.ts's createReplayGame). REPLAY_REQUEST is sent from that
@@ -292,6 +300,12 @@ export interface AdminSetSoundEffectsPayload {
 
 export interface ErrorPayload {
   code: string;
+  message: string;
+}
+
+export interface GameClosedPayload {
+  code: string;
+  reason: "IDLE_LOBBY" | "IDLE_ENDED" | "IDLE_ABANDONED";
   message: string;
 }
 

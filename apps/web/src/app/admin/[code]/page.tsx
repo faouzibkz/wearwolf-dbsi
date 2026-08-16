@@ -49,10 +49,17 @@ export default function AdminDashboardPage() {
     authenticate();
     socket.on("connect", authenticate);
     socket.on(SOCKET_EVENTS.ADMIN_STATE, (payload: AdminStatePayload) => setAdmin(payload));
+    // Server-side idle/abandoned sweep (see socket/idleCleanup.ts) just
+    // purged this game entirely — same full-screen error treatment as a
+    // failed auth, the outcome for this dashboard is identical either way.
+    socket.on(SOCKET_EVENTS.GAME_CLOSED, (payload: { message: string }) => {
+      setError(payload.message);
+    });
 
     return () => {
       socket.off("connect", authenticate);
       socket.off(SOCKET_EVENTS.ADMIN_STATE);
+      socket.off(SOCKET_EVENTS.GAME_CLOSED);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);

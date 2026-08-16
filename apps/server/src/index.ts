@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import { DEFAULT_ROLE_DIFFICULTY } from "@loupgarou/rating";
 import { config } from "./config.js";
 import { registerSocketHandlers } from "./socket/handlers.js";
+import { startIdleCleanupSweep } from "./socket/idleCleanup.js";
 import { authRouter } from "./http/authRoutes.js";
 import { accountApiRouter } from "./http/accountRoutes.js";
 import { badgeApiRouter } from "./http/badgeRoutes.js";
@@ -71,6 +72,9 @@ const io = new Server(httpServer, {
 });
 
 registerSocketHandlers(io);
+// Purges idle/abandoned LOBBY, ENDED, and stalled in-progress games from
+// memory on a periodic sweep — see socket/idleCleanup.ts for thresholds.
+startIdleCleanupSweep(io);
 
 httpServer.listen(config.port, () => {
   console.log(`[loup-garou] server listening on http://localhost:${config.port}`);
