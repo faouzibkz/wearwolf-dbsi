@@ -2,6 +2,7 @@ import type { Server } from "socket.io";
 import { SOCKET_EVENTS, type WolfChatMessagePayload, type WolfRoomStatePayload } from "@loupgarou/shared";
 import type { GameEngine } from "@loupgarou/game-engine";
 import { roomForPlayer } from "./broadcast.js";
+import { getWolfTargetPreviews } from "./wolfTargetPreview.js";
 
 /**
  * The wolf room's membership is recomputed from engine truth every time
@@ -21,7 +22,12 @@ export function pushWolfRoomState(io: Server, engine: GameEngine): void {
     .filter((p) => p.isAlive)
     .map((p) => ({ id: p.id, nickname: p.nickname }));
 
-  const payload: WolfRoomStatePayload = { members, alivePlayers, currentVotes: {} };
+  const payload: WolfRoomStatePayload = {
+    members,
+    alivePlayers,
+    currentVotes: engine.getWolfKillVotes(),
+    previewVotes: getWolfTargetPreviews(engine.getCode(), engine.getPublicState().nightNumber),
+  };
   for (const id of memberIds) {
     io.to(roomForPlayer(id)).emit(SOCKET_EVENTS.WOLF_ROOM_STATE, payload);
   }

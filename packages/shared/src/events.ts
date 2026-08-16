@@ -114,6 +114,10 @@ export const SOCKET_EVENTS = {
   WOLF_CHAT_MESSAGE: "wolf:chatMessage",
   WOLF_CHAT_SEND: "wolf:chatSend",
   WOLF_KILL_VOTE: "wolf:killVote",
+  // Live pre-confirm target selection, broadcast back out via the same
+  // WOLF_ROOM_STATE payload (previewVotes) — see WolfTargetPreviewPayload's
+  // own doc comment for why this is separate from NIGHT_ACTION_SUBMIT.
+  WOLF_TARGET_PREVIEW: "wolf:targetPreview",
 
   // --- cahier de charge #2 §17.3 — Afterlife: a private chat for every
   // dead player (isSpectator, see GameEngine.getAfterlifeMemberIds),
@@ -462,7 +466,30 @@ export interface WolfChatMessagePayload {
 export interface WolfRoomStatePayload {
   members: { id: string; nickname: string }[];
   alivePlayers: { id: string; nickname: string }[];
-  currentVotes: Record<string, string>; // wolfId -> targetId (visible to wolves)
+  currentVotes: Record<string, string>; // wolfId -> targetId, CONFIRMED (submitted via NIGHT_ACTION_SUBMIT)
+  /**
+   * wolfId -> targetId, LIVE preview — a wolf's current selection before
+   * they've hit "Confirmer" at all (see WOLF_TARGET_PREVIEW below). Purely
+   * ephemeral (never part of persisted game state, never survives past the
+   * current night): the point is showing teammates "X is currently
+   * considering Y" in real time while they're still deciding, not just
+   * once they've locked it in. A voter's own entry here is cleared the
+   * moment their vote actually lands in `currentVotes` instead.
+   */
+  previewVotes: Record<string, string>;
+}
+
+/**
+ * Sent by a wolf-pack member every time their LOCAL target selection
+ * changes during the KILL_VOTE night prompt — before they've clicked
+ * "Confirmer". Purely a live "here's what I'm currently looking at" signal
+ * for teammates (see WolfRoomStatePayload.previewVotes); it never itself
+ * records a vote — NIGHT_ACTION_SUBMIT is still required to actually lock
+ * one in. `targetId: null` clears the sender's own preview (e.g. they
+ * deselected).
+ */
+export interface WolfTargetPreviewPayload {
+  targetId: string | null;
 }
 
 /** Cahier de charge #2 §17.3 — same shape/reasoning as WolfChatSendPayload/WolfChatMessagePayload, membership is "dead" instead of "wolf". */

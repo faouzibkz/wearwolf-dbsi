@@ -104,3 +104,42 @@ describe("wolves can target themselves or a fellow wolf at night (feature 2, mis
     expect(engine.getPublicState().players.find((p) => p.id === ids[wolf])!.revealedRoleId).toBeUndefined();
   });
 });
+
+describe("getWolfKillVotes (feature 6: live wolf target preview)", () => {
+  it("is empty before any wolf has voted", () => {
+    const names = ["A", "B", "C", "D", "E"];
+    const { engine } = bootToNight1(names, { LOUP_GAROU: 1, LOUP_BLANC: 1 }, 4);
+    expect(engine.getWolfKillVotes()).toEqual({});
+  });
+
+  it("reflects each wolf's confirmed vote as soon as it's submitted, keyed by voter", () => {
+    const names = ["A", "B", "C", "D", "E"];
+    const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1, LOUP_BLANC: 1 }, 4);
+    const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
+    const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
+    const loupBlanc = names.find((n) => roles.get(ids[n]!) === "LOUP_BLANC")!;
+    const villager = names.find((n) => n !== wolf && n !== loupBlanc)!;
+
+    engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[villager]!);
+    expect(engine.getWolfKillVotes()).toEqual({ [ids[wolf]!]: ids[villager]! });
+
+    engine.submitNightAction(ids[loupBlanc]!, "KILL_VOTE", ids[villager]!);
+    expect(engine.getWolfKillVotes()).toEqual({
+      [ids[wolf]!]: ids[villager]!,
+      [ids[loupBlanc]!]: ids[villager]!,
+    });
+  });
+
+  it("returns a defensive copy — mutating the result never touches engine state", () => {
+    const names = ["A", "B", "C", "D", "E"];
+    const { engine, ids } = bootToNight1(names, { LOUP_GAROU: 1, LOUP_BLANC: 1 }, 4);
+    const roles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
+    const wolf = names.find((n) => roles.get(ids[n]!) === "LOUP_GAROU")!;
+    const villager = names.find((n) => n !== wolf)!;
+    engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[villager]!);
+
+    const votes = engine.getWolfKillVotes();
+    votes["tampered"] = "should-not-stick";
+    expect(engine.getWolfKillVotes()).not.toHaveProperty("tampered");
+  });
+});

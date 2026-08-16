@@ -28,6 +28,7 @@ import {
   type ReplayRequestResult,
   type ReplayStartedPayload,
   type WolfChatSendPayload,
+  type WolfTargetPreviewPayload,
 } from "@loupgarou/shared";
 import { gameRegistry } from "../gameRegistry.js";
 import { listPresets, savePreset, finalizeGameHistory } from "../db/persistence.js";
@@ -38,7 +39,8 @@ import { mvpVotingRegistry } from "../mvp/mvpVotingRegistry.js";
 import { clearMvpVoteTimer, scheduleMvpVoteTimer } from "./mvpTimer.js";
 import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
-import { relayWolfChatMessage } from "./wolfRoom.js";
+import { relayWolfChatMessage, pushWolfRoomState } from "./wolfRoom.js";
+import { setWolfTargetPreview, clearWolfTargetPreviewForVoter } from "./wolfTargetPreview.js";
 import { relayAfterlifeChatMessage } from "./afterlife.js";
 import { createReplayGame } from "./replay.js";
 import { forceNextPhase } from "./forceNextPhase.js";
@@ -712,6 +714,13 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
         engine.submitNightAction(playerId, payload.actionType, payload.targetId, payload.guessedRoleId);
+        // The vote just landed in getWolfKillVotes() (CONFIRMED) — drop the
+        // now-redundant pre-confirm preview entry so teammates see this
+        // voter transition cleanly from "considering…" to locked-in,
+        // instead of briefly showing both.
+        if (payload.actionType === "KILL_VOTE") {
+          clearWolfTargetPreviewForVoter(engine.getCode(), playerId);
+        }
 
         // The Voyante's power is otherwise silent: her INSPECT action has
         // no other feedback channel, so tell her privately what she saw.
@@ -847,6 +856,28 @@ export function registerSocketHandlers(io: Server): void {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
         relayWolfChatMessage(io, engine, playerId, payload.message);
+      }, ack);
+    });
+
+    // Feature 6 — live "who's currently considering whom" during the
+    // wolves' KILL_VOTE prompt, fired on every LOCAL selection change
+    // (before "Confirmer"), not just the final submit. See
+    // WolfTargetPreviewPayload's doc comment. Silently ignored outside
+    // NIGHT (a stray click after the night already resolved) rather than
+    // throwing — this is a pure UI courtesy, never worth an error toast.
+    socket.on(SOCKET_EVENTS.WOLF_TARGET_PREVIEW, (payload: WolfTargetPreviewPayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const playerId = socket.data.playerId!;
+        if (!engine.getWolfRoomMemberIds().includes(playerId)) {
+          throw new Error("Vous n'avez pas accès à cette action.");
+        }
+        if (engine.getPhase() !== "NIGHT") return;
+        if (payload.targetId !== null && !engine.getPlayers().some((p) => p.id === payload.targetId && p.isAlive)) {
+          throw new Error("Cible invalide.");
+        }
+        setWolfTargetPreview(engine.getCode(), playerId, payload.targetId);
+        pushWolfRoomState(io, engine);
       }, ack);
     });
 

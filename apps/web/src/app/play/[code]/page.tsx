@@ -846,6 +846,16 @@ function PhaseView({
               <NightPromptPanel
                 prompt={prompt}
                 players={state.players}
+                wolfRoom={wolfRoom}
+                onPreview={(targetId) => {
+                  // Fire-and-forget, real-time, every selection change —
+                  // not worth an ack round trip or an error toast if one
+                  // ever drops (see WolfTargetPreviewPayload's doc
+                  // comment: purely a UI courtesy, never game logic).
+                  void import("@/lib/socket").then(({ emitWithAck }) =>
+                    emitWithAck(SOCKET_EVENTS.WOLF_TARGET_PREVIEW, { targetId }).catch(() => {}),
+                  );
+                }}
                 onSubmit={async (actionType, targetId, guessedRoleId) => {
                   const { emitWithAck } = await import("@/lib/socket");
                   await emitWithAck(SOCKET_EVENTS.NIGHT_ACTION_SUBMIT, { actionType, targetId, guessedRoleId });

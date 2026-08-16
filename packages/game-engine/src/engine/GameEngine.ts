@@ -775,6 +775,19 @@ export class GameEngine {
   }
 
   /**
+   * CONFIRMED wolf-pack kill votes cast so far this night (voterId ->
+   * targetId) — the same shared `nightScratch.wolfVotes` scratch
+   * wolfPack.ts's buildWolfKillPrompt already reads to build each wolf's
+   * own NIGHT_PROMPT context. Exposed as its own method so the server's
+   * wolf-room broadcast (socket/wolfRoom.ts's WolfRoomStatePayload) can
+   * show every wolf ALL of their teammates' locked-in picks live, not just
+   * their own. Empty outside NIGHT or before anyone's voted.
+   */
+  getWolfKillVotes(): Record<string, string> {
+    return { ...(this.state.nightScratch?.wolfVotes ?? {}) };
+  }
+
+  /**
    * Cahier de charge #2 §17.3 — every dead player, all game (once dead,
    * always eligible — death is permanent, same contract as `isSpectator`
    * itself, see DeathQueue.processDeaths). Mirrors getWolfRoomMemberIds()'s
