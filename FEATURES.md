@@ -338,6 +338,30 @@ Huit demandes ponctuelles de l'utilisateur, hors des deux cahiers de charge ci-d
 
 ---
 
+## 19. Correctifs de bugs signalés en jeu réel (17 août 2026) — ✅ Fait
+
+Trois bugs remontés par des **retours de vrais joueurs** (jamais vus en test automatisé — les trois sont des problèmes d'UI/synchronisation client-serveur, pas de logique de moteur de jeu), corrigés en une session, un seul commit groupé (les trois touchent les mêmes fichiers côté `apps/web`, un rollback groupé a plus de sens qu'un rollback par bug ici) :
+
+1. **Le Chasseur voyait les rôles de tout le monde dans l'Afterlife avant même de choisir sa cible de vengeance.** Le chat Afterlife (qui révèle le vrai rôle de chaque joueur, vivant ou mort — voir `FEATURES.md` §17.3) s'affichait dès l'instant de la mort, y compris pendant que le Chasseur doit encore choisir qui il emporte avec lui. Corrigé : le chat Afterlife reste masqué tant qu'une action de mort est en attente (tir du Chasseur ou succession du Chef).
+2. **Le Prêtre — et en réalité tout rôle de nuit — pouvait sembler avoir agi alors que son action n'était jamais arrivée au serveur.** L'écran « Action envoyée » s'affichait dès le clic, sans attendre la confirmation réelle du serveur : une soumission rejetée ou perdue (coupure réseau, connexion Tailscale instable pendant une soirée de jeu) avait l'air strictement identique à une soumission réussie. Pour un pouvoir à usage unique comme celui du Prêtre, c'est silencieux et définitif — exactement le symptôme remonté (« il choisit une cible, tire, et son pouvoir ne marche pas »). Corrigé : la confirmation n'apparaît plus qu'après un vrai accusé de réception du serveur ; en cas d'échec, une erreur s'affiche et le joueur peut réessayer.
+3. **« Je n'ai pas pu voter » (retours ponctuels, une minorité de joueurs).** Le vote du village se fait un joueur à la fois, dans l'ordre de la discussion (voir `DayVoteQueue.ts`), avec un minuteur individuel qui **saute silencieusement** le tour de qui ne réagit pas assez vite — rien ne signalait que c'était devenu le tour d'un joueur donné, facile à manquer autour d'une table qui discute. Ajouté : un son + une notification + un encadré visuel dès que c'est le tour d'un joueur, et affichage d'une erreur si un vote est rejeté/perdu (au lieu de rien du tout, comme le point 2).
+
+**Commit** : `575298d` — **Tag de rollback** : `bugfix-chasseur-pretre-dayvote`.
+
+**Pour annuler ce lot précis** (revenir à l'état exact d'avant, sans toucher à quoi que ce soit d'antérieur) :
+
+```bash
+git checkout 85f3855   # regarder l'état d'avant sans rien casser (detached HEAD)
+# ou, pour vraiment faire reculer master :
+git reset --hard 85f3855   # ⚠️ destructif sur les commits locaux non poussés ailleurs
+```
+
+**Vérifications effectuées** : `docker compose build web` (compilation TypeScript + vérification de types complète côté `apps/web`, propre, aucune erreur) et démarrage réel de la stack (`docker compose up -d`) avec vérification que les 3 conteneurs démarrent sains et que l'app se charge sans erreur console liée au changement. **Pas de playtest multi-joueurs réel des trois scénarios précis** (un Chasseur qui meurt vraiment, un Prêtre qui tire de nuit, un joueur qui atteint son tour de vote) — la suite de tests automatisée (`vitest`) n'a pas non plus été relancée cette session (`npm`/`node` absents du PATH de cette machine). À confirmer lors de la prochaine vraie soirée de jeu.
+
+**Convention adoptée à partir de maintenant** (accord explicite de l'utilisateur, 17 août 2026) : chaque lot de travail — feature ou correctif — se termine par un commit, un tag Git dédié, et une entrée ici mentionnant la date, ce qui a changé, le hash de commit, le nom du tag, et la commande exacte de rollback. Voir `ARCHITECTURE.md` §13 pour le détail technique de cette convention et l'historique complet de tous les tags posés à ce jour.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :

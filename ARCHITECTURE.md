@@ -259,6 +259,7 @@ Chaque page compte-liée (`/profile`, `/history`, gate de `/join`) suit le même
 - **Incident du 08/08/2026 : migration Phase 3 jamais appliquée en prod** — `schema.prisma` avait bien les colonnes `User.totalXp`/`level`/`mvpCount` (Phase 3), mais `npx prisma db push` n'avait jamais été lancé contre la RDS de prod avant le déploiement. Résultat : `GET /me` plantait tout le process Node au premier `/login` (Prisma `P2022`, colonne manquante), et ECS redémarrait en boucle sur le même mur — plus aucun joueur ne pouvait se connecter. Deux corrections apportées :
   1. **`asyncHandler.ts`** (`apps/server/src/http/`) + middleware d'erreur global dans `index.ts` + `process.on("unhandledRejection"/"uncaughtException")` — une erreur inattendue sur UNE requête ne doit plus jamais faire tomber TOUT le serveur (donc toutes les parties en cours) ; elle ne casse maintenant que cette requête (500 propre).
   2. **`deploy-manual.ps1`** détecte désormais si `apps/server/prisma/schema.prisma` a changé depuis le dernier déploiement réussi (marqueur local `.deploy-marker`, gitignored) et bloque avec les commandes exactes à lancer avant de continuer — pas d'automatisation complète possible : `aws ecs execute-command` est une session SSM interactive, pas de mode "une seule commande" scriptable proprement.
+- **Piège UI découvert le 17 août 2026 : ne jamais afficher une confirmation avant d'avoir le vrai accusé de réception du serveur.** Plusieurs boutons d'action (`NightPromptPanel.tsx`, le vote du jour dans `play/[code]/page.tsx`) appelaient `onSubmit(...)` — une fonction async qui fait un aller-retour `emitWithAck` — sans l'attendre ni capter une éventuelle erreur, puis basculaient immédiatement sur l'écran "Action envoyée"/optimiste. Un échec silencieux (déconnexion, rejet serveur, connexion Tailscale instable) avait donc l'air strictement identique à une réussite, sans aucun moyen pour le joueur de s'en rendre compte ni de réessayer — c'est ce qui causait le bug remonté "le pouvoir du Prêtre ne marche pas" et une partie des "je n'ai pas pu voter" (voir `FEATURES.md` §19). Corrigé en centralisant chaque soumission derrière un `await` réel avant de confirmer, avec affichage d'erreur sinon (`submitAndConfirm` dans `NightPromptPanel.tsx` — gabarit à réutiliser). **Tout nouveau bouton d'action de jeu doit suivre ce patron** — jamais de confirmation optimiste avant l'ack.
 - **Bug du 8 août 2026 : le timer côté joueur affichait parfois "0:00" ou semblait désynchronisé** (rapporté après test Docker de la nuit séquentielle, mais en réalité présent depuis toujours sur TOUTES les phases — discussion du jour, vote du village, débat du Chef, etc.). Cause racine : `pushAllPrompts` (diffuse `GAME_STATE.phaseEndsAt`, et pendant la nuit `NIGHT_PROMPT`/`NIGHT_STEP_STATE.deadlineAt`) était appelé AVANT `schedulePhaseTimer` — le seul endroit qui calcule réellement un nouveau `phaseEndsAt` (via `GameEngine.setPhaseTimer`) — à 5 endroits (`handlers.ts`'s `sync()`, et 4 fois dans `timers.ts`). Résultat : chaque transition (nouveau tour de parole, nouvelle étape de nuit, etc.) diffusait d'abord l'ancienne échéance déjà expirée, et la vraie échéance n'atteignait les clients qu'à la prochaine action sans rapport qui déclenchait une nouvelle diffusion. Corrigé en inversant l'ordre des deux appels aux 5 endroits — toujours `schedulePhaseTimer` puis `pushAllPrompts`, jamais l'inverse. Tests de non-régression dans `apps/server/src/socket/timerOrdering.test.ts` (vérifiés en désactivant temporairement le correctif : les 3 tests échouent bien sans lui).
 
 ---
@@ -343,3 +344,48 @@ Parce que la mort passe par `processDeaths` (le même chemin universel que toute
 | Changer les seuils de fermeture automatique des parties inactives | `apps/server/src/socket/idleCleanup.ts` (`IDLE_LOBBY_MS`/`IDLE_ENDED_MS`/`IDLE_ABANDONED_MS`) — voir §11.3 |
 | Modifier l'infra AWS | `infra/aws/*.tf` — **toujours relire le plan avant d'approuver** |
 | Comprendre le cahier de charge original et ce qu'il reste à faire | `FEATURES.md` |
+| Annuler (rollback) un lot de travail déjà commité/tagué | §13 ci-dessous — tableau complet des tags avec date/commit/commande exacte |
+
+---
+
+## 13. Convention : commit + tag + doc à jour, à chaque lot de travail
+
+Adoptée le 17 août 2026, à la demande explicite de l'utilisateur, pour tout travail à venir (feature ou correctif) : chaque lot se termine par —
+
+1. **Un commit** (ou groupe de commits liés) avec un message qui explique le *pourquoi*, pas seulement le *quoi*.
+2. **Un tag Git annoté dédié** (`git tag -a <nom> -m "..."`), posé sur le dernier commit du lot, jamais recyclé pour un lot différent.
+3. **Une entrée dans `FEATURES.md`** (suivi produit) et, si le lot introduit un nouveau patron technique ou un piège appris à la dure, une entrée correspondante ici — toutes deux mentionnant explicitement la date, le(s) hash(es) de commit, le nom du tag, et la commande exacte de rollback.
+
+**Pour annuler n'importe quel lot déjà tagué** : repérer le commit juste *avant* le premier commit du lot (colonne « Avant le lot » ci-dessous, ou `git log --oneline`), puis :
+
+```bash
+git checkout <hash-avant-le-lot>       # regarder l'état d'avant sans rien casser (detached HEAD)
+# ou, pour vraiment faire reculer master :
+git reset --hard <hash-avant-le-lot>   # ⚠️ destructif sur tout commit local non poussé ailleurs
+```
+
+Un tag pointe toujours sur le *dernier* commit du lot qu'il nomme — pour l'annuler, c'est donc le commit **parent** (une ligne plus haut dans `git log`) qu'il faut viser, pas le tag lui-même.
+
+### Historique des tags (le plus récent en premier)
+
+| Tag | Date | Commit | Avant le lot | Contenu |
+|---|---|---|---|---|
+| `bugfix-chasseur-pretre-dayvote` | 2026-08-17 | `575298d` | `85f3855` | Fuite de rôles Chasseur→Afterlife, confirmations d'action silencieusement fausses (Prêtre etc.), tour de vote du jour manqué sans avertissement — `FEATURES.md` §19 |
+| `feature-batch-8-complete` | 2026-08-16 | `7a41057` | `6559c64`* | Clôture doc du lot de 8 features ci-dessous (pas du code en soi) |
+| `feature-pretre-role` | 2026-08-16 | `6559c64` | `efbdf19` | Nouveau rôle Prêtre — `FEATURES.md` §18.8, §11.8 |
+| `feature-personal-notes` | 2026-08-16 | `efbdf19` | `5d4a53b` | Notes personnelles synchronisées — `FEATURES.md` §18.7, §11.7 |
+| `feature-wolf-live-preview` | 2026-08-16 | `5d4a53b` | `f2e6f34` | Aperçu en direct de la cible des loups — `FEATURES.md` §18.6, §11.6 |
+| `feature-return-home` | 2026-08-16 | `f2e6f34` | `16bf89b` | Bouton retour à l'accueil — `FEATURES.md` §18.5, §11.5 |
+| `feature-rejoin-popup` | 2026-08-16 | `16bf89b` | `a7896e6` | Popup de reprise de partie — `FEATURES.md` §18.4, §11.4 |
+| `feature-idle-cleanup` | 2026-08-16 | `a7896e6` | `1bb5db5` | Fermeture auto des parties inactives — `FEATURES.md` §18.3, §11.3 |
+| `feature-tie-vote-hardcoded` | 2026-08-16 | `1bb5db5` | `a644800` | Égalité de vote re-codée en dur — `FEATURES.md` §18.2, §11.2 |
+| `feature-mvp-vote-deadline` | 2026-08-13 | `f4551e5` | `63289c2` | Minuteur configurable d'auto-finalisation du vote MVP |
+| `feature-admin-kill-and-reveal` | 2026-08-10 | `63289c2` | `18bf5b2` | §17.5d : élimination admin + reveal au clic |
+| `feature-instant-replay` | 2026-08-10 | `18bf5b2` | `4d9c697` | §17.5c : rejeu instantané (même config / reconfigurer) |
+| `feature-account-reconnect` | 2026-08-10 | `4d9c697` | `affbf2c` | §17.5b : reconnexion basée compte sur `PLAYER_JOIN` |
+| `feature-afterlife-full-roles` | 2026-08-10 | `affbf2c` | `fb29279` | §17.5a : Afterlife — visibilité complète des rôles pour les morts |
+| `phase-2b-rating-engine` | 2026-08-07 | `7627732` | `9c4e826` | Moteur de rating générique, coefficients de difficulté, performance v1 |
+| `phase-2a-advanced-stats` | 2026-08-07 | `9c4e826` | `342d755` | Séries de victoires, nuits survécues moy., répartition causes de mort |
+| `phase-1-accounts-live` | 2026-08-07 | `342d755` | `2ac31fe` | Comptes/profils/historique/stats — **déployé en prod le 07/08/2026** |
+
+\* `feature-batch-8-complete` (`7a41057`) est un tag de clôture **documentaire** posé juste après `6559c64` (fin du code du lot de 8 features, qui va de `a644800` à `6559c64`) — annuler jusqu'à `6559c64` ne défait QUE les commits de doc qui ont suivi. Pour annuler le lot de 8 features en entier, code compris, viser plutôt le commit juste avant `a644800` (Feature 1), c'est-à-dire `f4551e5` (`feature-mvp-vote-deadline`).
