@@ -26,6 +26,7 @@ import {
   type PlayerReconnectPayload,
   type ReplayRequestPayload,
   type ReplayRequestResult,
+  type NotesStatePayload,
   type ReplayStartedPayload,
   type WolfChatSendPayload,
   type WolfTargetPreviewPayload,
@@ -41,6 +42,7 @@ import { readSessionFromCookieHeader } from "../auth/cookies.js";
 import { broadcastGameState, notifyGame, notifyPlayer, pushRoleAssignments, roomForGame, roomForPlayer } from "./broadcast.js";
 import { relayWolfChatMessage, pushWolfRoomState } from "./wolfRoom.js";
 import { setWolfTargetPreview, clearWolfTargetPreviewForVoter } from "./wolfTargetPreview.js";
+import { getNote, saveNote, clearNotesForGame } from "../notes/notesRegistry.js";
 import { relayAfterlifeChatMessage } from "./afterlife.js";
 import { createReplayGame } from "./replay.js";
 import { forceNextPhase } from "./forceNextPhase.js";
@@ -87,6 +89,11 @@ export function sync(io: Server, engine: import("@loupgarou/game-engine").GameEn
     io.to(roomForGame(engine.getCode())).emit(SOCKET_EVENTS.GAME_ENDED, {
       stats: engine.getEndGameStats(),
     });
+
+    // Feature 7 — personal notes are purged ONLY here, at GAME_ENDED, never
+    // earlier (a disconnect, an idle-cleanup sweep, etc.) — see
+    // notes/notesRegistry.ts's own doc comment for why.
+    clearNotesForGame(engine.getCode());
 
     // Opens the post-game MVP vote (section 12) right away, independent of
     // everything below — every player who was in the game is eligible to
@@ -923,6 +930,32 @@ export function registerSocketHandlers(io: Server): void {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         finalizeMvpVoting(io, engine);
+      }, ack);
+    });
+
+    // -----------------------------------------------------------------
+    // Personal notes (Feature 7)
+    // -----------------------------------------------------------------
+
+    // Fetched once when a player's notes panel first opens (or right after
+    // a reconnect) — never pushed proactively, since nothing but the
+    // player's own future NOTES_SAVE ever changes it.
+    socket.on(SOCKET_EVENTS.NOTES_GET, (_payload: unknown, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const playerId = socket.data.playerId;
+        if (!playerId) throw new Error("Vous devez être un joueur de cette partie.");
+        const response: NotesStatePayload = { text: getNote(engine.getCode(), playerId) };
+        return response;
+      }, ack);
+    });
+
+    socket.on(SOCKET_EVENTS.NOTES_SAVE, (payload: NotesStatePayload, ack: Ack) => {
+      safeAck(() => {
+        const engine = requireGameFor(socket);
+        const playerId = socket.data.playerId;
+        if (!playerId) throw new Error("Vous devez être un joueur de cette partie.");
+        saveNote(engine.getCode(), playerId, payload.text);
       }, ack);
     });
   });

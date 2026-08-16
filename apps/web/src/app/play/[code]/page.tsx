@@ -44,6 +44,7 @@ import { LiveVoteList } from "@/components/LiveVoteList";
 import { WolfChat } from "@/components/WolfChat";
 import { AfterlifeChat } from "@/components/AfterlifeChat";
 import { EndGamePanel } from "@/components/EndGamePanel";
+import { NotesButton } from "@/components/NotesButton";
 
 /**
  * Cahier de charge #2 §17.2 — Night presentation. Per-role "wake up" flavor
@@ -439,6 +440,12 @@ export default function PlayPage() {
           also seeing (read-only from here on — the "(spectateur)" label
           next to their name above already reflects this). */}
       {!me?.isAlive && afterlifeRoom && <AfterlifeChat room={afterlifeRoom} messages={afterlifeMessages} />}
+
+      {/* Feature 7 — private, server-synced notes, available to every
+          player through every phase of the whole game. Hidden once the
+          game's ended: the server purges notes right at GAME_ENDED, so
+          there's nothing left to jot down or read at that point. */}
+      {!endStats && <NotesButton />}
 
       {endStats ? (
         <EndGamePanel

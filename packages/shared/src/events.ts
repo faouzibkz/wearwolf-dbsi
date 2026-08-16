@@ -222,6 +222,14 @@ export const SOCKET_EVENTS = {
   // vote — same idea as ADMIN_FORCE_NEXT_PHASE, since this vote otherwise
   // has no fixed deadline.
   ADMIN_FORCE_MVP_FINALIZE: "admin:forceMvpFinalize",
+
+  // --- personal notes (Feature 7): a private, server-synced scratchpad
+  // per player, available every phase of the whole game. NOTES_GET is
+  // fetched once when the notes panel first opens (or right after a
+  // reconnect); NOTES_SAVE is fired debounced as the player types. Purged
+  // server-side ONLY at GAME_ENDED — see notes/notesRegistry.ts. ---
+  NOTES_GET: "notes:get",
+  NOTES_SAVE: "notes:save",
 } as const;
 
 export type SocketEventName = (typeof SOCKET_EVENTS)[keyof typeof SOCKET_EVENTS];
@@ -311,6 +319,11 @@ export interface GameClosedPayload {
   code: string;
   reason: "IDLE_LOBBY" | "IDLE_ENDED" | "IDLE_ABANDONED";
   message: string;
+}
+
+/** NOTES_GET's ack response shape and NOTES_SAVE's request payload — same shape either direction. */
+export interface NotesStatePayload {
+  text: string;
 }
 
 export interface NotificationPayload {
