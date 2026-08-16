@@ -671,7 +671,18 @@ export function registerSocketHandlers(io: Server): void {
       safeAck(() => {
         const engine = requireGameFor(socket);
         engine.castChefVote(payload.voterId ?? socket.data.playerId!, payload.candidateId);
-        broadcastGameState(io, engine);
+        // Don't make the table sit out the rest of CHEF_VOTE's timer once
+        // nobody's left to vote — tally and reveal the Chef immediately,
+        // same "no fixed deadline once everyone's spoken" fix as the
+        // post-game MVP vote. sync() (not just broadcastGameState) so the
+        // now-CHEF_REVEAL phase gets its own fresh timer scheduled right
+        // away instead of briefly carrying CHEF_VOTE's stale deadline.
+        if (engine.isChefVoteComplete()) {
+          engine.tallyChefVoteAndProceed();
+          sync(io, engine);
+        } else {
+          broadcastGameState(io, engine);
+        }
       }, ack);
     });
 

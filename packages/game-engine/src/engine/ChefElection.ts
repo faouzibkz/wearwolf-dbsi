@@ -44,6 +44,22 @@ export function castChefVote(ctx: EngineContext, voterId: string, candidateId: s
 }
 
 /**
+ * True once every eligible voter (every alive player who is NOT themselves
+ * a candidate — candidates can't vote, see castChefVote) has cast a ballot.
+ * Lets the server tally and reveal the Chef immediately instead of sitting
+ * out the rest of CHEF_VOTE's timer once nobody's left to vote — same "no
+ * fixed deadline once everyone's spoken" idea as the post-game MVP vote.
+ */
+export function isChefVoteComplete(ctx: EngineContext): boolean {
+  const chef = ctx.state.chef;
+  const eligibleVoterIds = ctx
+    .getAlivePlayers()
+    .map((p) => p.id)
+    .filter((id) => !chef.candidates.includes(id));
+  return eligibleVoterIds.length > 0 && eligibleVoterIds.every((id) => chef.votes.has(id));
+}
+
+/**
  * Live, unweighted tally of the current CHEF_VOTE (candidateId -> vote
  * count) — same idea as VoteManager.computeLiveVoteTally, but no Chef
  * double-vote bonus applies here since nobody is Chef yet at this point in

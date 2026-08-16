@@ -71,4 +71,30 @@ describe("Chef du village election", () => {
     expect(outcome?.tie).toBe(true);
     expect(outcome?.tiedIds.slice().sort()).toEqual([playerIds.G, playerIds.H].sort());
   });
+
+  it("isChefVoteComplete() flips true only once every non-candidate has voted", () => {
+    const { engine, playerIds } = makeGameWithPlayers(["A", "B", "C", "D", "E"]);
+    engine.startGame();
+    engine.volunteerForChef(playerIds.A!);
+    engine.volunteerForChef(playerIds.B!);
+    engine.forceStartChefDebate();
+    engine.advanceChefSpeaker();
+    engine.advanceChefSpeaker(); // done -> CHEF_VOTE
+
+    // Eligible voters: C, D, E (candidates A and B can't vote themselves).
+    expect(engine.isChefVoteComplete()).toBe(false);
+    engine.castChefVote(playerIds.C!, playerIds.A!);
+    expect(engine.isChefVoteComplete()).toBe(false);
+    engine.castChefVote(playerIds.D!, playerIds.A!);
+    expect(engine.isChefVoteComplete()).toBe(false);
+    engine.castChefVote(playerIds.E!, playerIds.B!);
+    expect(engine.isChefVoteComplete()).toBe(true);
+  });
+
+  it("isChefVoteComplete() is false outside CHEF_VOTE", () => {
+    const { engine } = makeGameWithPlayers(["A", "B", "C", "D", "E"]);
+    engine.startGame();
+    expect(engine.getPhase()).toBe("CHEF_CANDIDACY");
+    expect(engine.isChefVoteComplete()).toBe(false);
+  });
 });

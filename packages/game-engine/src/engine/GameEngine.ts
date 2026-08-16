@@ -318,6 +318,11 @@ export class GameEngine {
     ChefElection.castChefVote(this.ctx(), voterId, candidateId);
   }
 
+  /** True once every eligible voter has cast a chef-vote ballot — see ChefElection.isChefVoteComplete. */
+  isChefVoteComplete(): boolean {
+    return this.state.phase === "CHEF_VOTE" && ChefElection.isChefVoteComplete(this.ctx());
+  }
+
   tallyChefVoteAndProceed(): string {
     if (this.state.phase !== "CHEF_VOTE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
