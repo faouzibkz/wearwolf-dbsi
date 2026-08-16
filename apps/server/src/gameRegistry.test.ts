@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { GameEngine } from "@loupgarou/game-engine";
 import { gameRegistry } from "./gameRegistry.js";
 
@@ -81,6 +81,78 @@ describe("GameRegistry — account-based reconnect", () => {
 
       expect(gameRegistry.findPlayerIdForUser(engine, "user-to-clear")).toBeUndefined();
       expect(gameRegistry.isCurrentSocket(alice.id, "socket-to-clear")).toBe(false);
+    });
+  });
+
+  describe("findOpenGamesForUser (Feature 4: rejoin popup)", () => {
+    // These games must actually be registered (via gameRegistry.create, not
+    // a bare GameEngine.createGame like bootGame() above) so
+    // findOpenGamesForUser — which scans the registry's own game Map — can
+    // see them. Cleaned up in afterEach so they don't leak into other
+    // describe blocks' assumptions about registry contents.
+    const createdCodes: string[] = [];
+
+    function createRegisteredGame() {
+      const { engine } = gameRegistry.create({ roleCounts: { VILLAGEOIS: 3 } as any });
+      createdCodes.push(engine.getCode());
+      return engine;
+    }
+
+    it("returns an empty list for an account with no seats anywhere", () => {
+      expect(gameRegistry.findOpenGamesForUser("user-with-nothing")).toEqual([]);
+    });
+
+    it("finds an account's seat in a LOBBY game", () => {
+      const engine = createRegisteredGame();
+      const bob = engine.addPlayer("Bob");
+      gameRegistry.setPlayerUserId(bob.id, "user-bob-open");
+
+      const open = gameRegistry.findOpenGamesForUser("user-bob-open");
+      expect(open).toEqual([{ code: engine.getCode(), phase: "LOBBY", playerId: bob.id, nickname: "Bob" }]);
+    });
+
+    it("finds an account's seat in an in-progress game", () => {
+      const engine = createRegisteredGame();
+      engine.addPlayer("A");
+      engine.addPlayer("B");
+      engine.addPlayer("C");
+      const dana = engine.addPlayer("Dana");
+      gameRegistry.setPlayerUserId(dana.id, "user-dana-open");
+      engine.startGame();
+
+      const open = gameRegistry.findOpenGamesForUser("user-dana-open");
+      expect(open).toHaveLength(1);
+      expect(open[0]).toMatchObject({ code: engine.getCode(), playerId: dana.id, nickname: "Dana" });
+      expect(open[0]!.phase).not.toBe("LOBBY");
+    });
+
+    it("excludes ENDED games — nothing left to rejoin", () => {
+      const engine = createRegisteredGame();
+      engine.addPlayer("A");
+      engine.addPlayer("B");
+      engine.addPlayer("C");
+      const eve = engine.addPlayer("Eve");
+      gameRegistry.setPlayerUserId(eve.id, "user-eve-ended");
+      engine.startGame();
+      engine.endGame(null);
+
+      expect(gameRegistry.findOpenGamesForUser("user-eve-ended")).toEqual([]);
+    });
+
+    it("lists every open game an account has a seat in, across multiple games", () => {
+      const gameA = createRegisteredGame();
+      const gameB = createRegisteredGame();
+      const seatA = gameA.addPlayer("Multi");
+      const seatB = gameB.addPlayer("Multi");
+      gameRegistry.setPlayerUserId(seatA.id, "user-multigame");
+      gameRegistry.setPlayerUserId(seatB.id, "user-multigame");
+
+      const open = gameRegistry.findOpenGamesForUser("user-multigame");
+      expect(open.map((g) => g.code).sort()).toEqual([gameA.getCode(), gameB.getCode()].sort());
+    });
+
+    afterEach(() => {
+      for (const code of createdCodes.splice(0)) gameRegistry.remove(code);
     });
   });
 });

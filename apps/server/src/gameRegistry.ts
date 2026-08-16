@@ -78,6 +78,30 @@ class GameRegistry {
   }
 
   /**
+   * Every currently-open (not ENDED) game this account has a seat in —
+   * LOBBY included, so an admin-created lobby the player joined and then
+   * closed their tab on still shows up. Backs the "you have an open game,
+   * rejoin?" popup shown right after login (see http/accountRoutes.ts's
+   * GET /account/open-games) — the account might be signed in on a brand
+   * new device/browser with no localStorage session for that game at all,
+   * so this can't rely on anything client-side; it has to come from the
+   * server's own userIdByPlayerId linkage instead.
+   */
+  findOpenGamesForUser(userId: string): { code: string; phase: string; playerId: string; nickname: string }[] {
+    const results: { code: string; phase: string; playerId: string; nickname: string }[] = [];
+    for (const [code, engine] of this.games) {
+      if (engine.getPhase() === "ENDED") continue;
+      for (const player of engine.getPlayers()) {
+        if (this.userIdByPlayerId.get(player.id) === userId) {
+          results.push({ code, phase: engine.getPhase(), playerId: player.id, nickname: player.nickname });
+          break; // one seat per account per game
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
    * Fully purges a game: the engine itself, its admin socket / host token /
    * activity bookkeeping, and every player-scoped map entry for players who
    * were in it (same cleanup clearPlayerUserIds already does after history

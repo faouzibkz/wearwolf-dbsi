@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma.js";
 import { readSessionFromRequest } from "../auth/cookies.js";
 import type { SessionTokenPayload } from "../auth/jwt.js";
 import { getUserAggregateStats, getUserGameHistory } from "../db/persistence.js";
+import { gameRegistry } from "../gameRegistry.js";
 import { asyncHandler } from "./asyncHandler.js";
 
 /**
@@ -102,6 +103,21 @@ accountApiRouter.get(
       return;
     }
     res.json(await buildPublicProfile(user));
+  }),
+);
+
+/**
+ * "You have an open game, rejoin?" popup support (Feature 4). Purely
+ * in-memory (gameRegistry, not the DB) — this is about games still LIVE in
+ * this server process right now, not historical ones. Deliberately
+ * excludes ENDED games: once a game is over there's nothing left to
+ * "rejoin", the match-history page is the right place for those instead.
+ */
+accountApiRouter.get(
+  "/account/open-games",
+  requireSession,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    res.json({ games: gameRegistry.findOpenGamesForUser(req.session!.userId) });
   }),
 );
 
