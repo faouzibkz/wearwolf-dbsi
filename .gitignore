@@ -15,3 +15,4 @@ apps/server/prisma/dev.db
 apps/server/generated/
 *.tsbuildinfo
 .deploy-marker
+infra/aws/images-*.json
