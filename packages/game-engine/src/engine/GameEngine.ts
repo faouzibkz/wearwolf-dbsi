@@ -82,7 +82,6 @@ export class GameEngine {
       lastDeathPlayerIds: [],
       pendingChasseurShooterIds: [],
       pendingChefSuccessionDeadChefId: null,
-      pendingTieResolutionRule: null,
       rolesRevealedToPlayers: false,
       gameEndedNotified: false,
       createdAt: Date.now(),
@@ -1082,7 +1081,26 @@ export class GameEngine {
 
   private startDayVoteFromSecondDebate(): void {
     this.state.phase = "DAY_VOTE";
+    this.startDayVoteQueueOrTally();
+  }
+
+  /**
+   * Builds the per-voter turn queue for the current DAY_VOTE round, then
+   * immediately tallies instead if that queue comes back empty. That can
+   * only happen in round 2 (the tied candidates are excluded from voting
+   * in their own re-vote — see DayVoteQueue.buildVoteOrder): in a small
+   * end-game every remaining alive player might be one of the tied
+   * candidates, leaving literally nobody left to vote. Rather than hang
+   * forever waiting for a turn that will never come, tally right away —
+   * with zero votes cast it resolves as a fresh tie, which
+   * resolveRepeatedTie already turns into "nobody dies, move on".
+   */
+  private startDayVoteQueueOrTally(): void {
     DayVoteQueue.startDayVoteQueue(this.ctx());
+    const queue = this.state.dayVoteQueue;
+    if (!queue || queue.order.length === 0) {
+      this.tallyDayVoteAndProceed();
+    }
   }
 
   /**
@@ -1131,7 +1149,7 @@ export class GameEngine {
     this.snapshot();
     this.state.lastDeathPlayerIds = [];
     this.state.dayVoteQueue = null; // this round's queue has done its job either way
-    const outcome = VoteManager.tallyDayVote(this.ctx(), this.rng);
+    const outcome = VoteManager.tallyDayVote(this.ctx());
 
     if (outcome.awaitingAnotherRound) {
       this.state.phase = "TIE_DEFENSE";
@@ -1142,13 +1160,10 @@ export class GameEngine {
       TieDefense.startTieDefense(this.ctx(), this.rng);
       return outcome;
     }
-    if (outcome.needsManualResolution) {
-      this.state.phase = "TIE_REVOTE"; // parked here awaiting admin/chef resolution
-      return outcome;
-    }
 
-    // Fully resolved this call: either someone was eliminated, or a tie was
-    // settled by NO_ELIMINATION / RANDOM. Either way, move on.
+    // Fully resolved this call: either someone was eliminated, or a
+    // persistent (round 2) tie was hard-resolved as "nobody dies". Either
+    // way, move on.
     this.finishEliminationAndProceed();
     return outcome;
   }
@@ -1158,7 +1173,7 @@ export class GameEngine {
     if (this.state.phase !== "TIE_DEFENSE") throw new Error("Ce n'est pas le moment.");
     this.snapshot();
     this.state.phase = "DAY_VOTE"; // reuses the round-2+ voting logic in VoteManager
-    DayVoteQueue.startDayVoteQueue(this.ctx()); // fresh per-player turn order for the re-vote
+    this.startDayVoteQueueOrTally(); // fresh per-player turn order for the re-vote
   }
 
   getCurrentTieDefenseSpeakerId(): string | null {
@@ -1190,34 +1205,9 @@ export class GameEngine {
       // short of an admin's manual "Annuler" (undo). Same root cause and
       // fix as the DAY_DISCUSSION -> DAY_VOTE gap fixed elsewhere this
       // session (see startChefSecondDebate()/advanceDaySpeaker()).
-      DayVoteQueue.startDayVoteQueue(this.ctx());
+      this.startDayVoteQueueOrTally();
     }
     return result;
-  }
-
-  resolveTieManually(targetId: string | null): VoteManager.DayVoteOutcome {
-    if (this.state.phase !== "TIE_REVOTE") throw new Error("Aucune égalité à résoudre.");
-    this.snapshot();
-    this.state.lastDeathPlayerIds = [];
-    const outcome = VoteManager.resolveTieManually(this.ctx(), targetId);
-    this.finishEliminationAndProceed();
-    return outcome;
-  }
-
-  /**
-   * Auto-progress safety net for TIE_REVOTE — the one deliberately-manual
-   * checkpoint (a tie under CHEF_DECIDES/ADMIN_DECIDES waits for a human
-   * pick via resolveTieManually). Even a deliberate manual step shouldn't
-   * be able to freeze a fully-automatic game forever, so once its own
-   * timers.tieRevote deadline passes, break the tie at random exactly like
-   * the TieResolutionRule "RANDOM" option would.
-   */
-  autoResolveTieRevoteIfPending(): void {
-    if (this.state.phase !== "TIE_REVOTE") return;
-    const tiedIds = this.state.dayVote.tiedIds;
-    const choice = tiedIds.length > 0 ? shuffle(tiedIds, this.rng)[0]! : null;
-    this.appendLog("Égalité non résolue à temps — décision prise au hasard.");
-    this.resolveTieManually(choice);
   }
 
   private finishEliminationAndProceed(): void {
@@ -1398,10 +1388,6 @@ export class GameEngine {
 
   getPendingChasseurShooterIds(): string[] {
     return this.state.pendingChasseurShooterIds;
-  }
-
-  getPendingTieResolutionRule() {
-    return this.state.pendingTieResolutionRule;
   }
 
   getChefId(): string | null {

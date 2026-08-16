@@ -44,7 +44,6 @@ export const SOCKET_EVENTS = {
   ADMIN_END_GAME: "admin:endGame",
   ADMIN_REVEAL_ROLES: "admin:revealRoles",
   ADMIN_FORCE_START_CHEF_ELECTION: "admin:forceStartChefElection",
-  ADMIN_RESOLVE_TIE: "admin:resolveTie",
   // Admin-only escape hatch — e.g. a disconnected player who'll never come
   // back and is blocking the game. See GameEngine.adminKillPlayer's doc
   // comment: routes through the exact same death pipeline as any other
@@ -494,11 +493,6 @@ export interface ChasseurShootPayload {
 export interface MorningAnnouncementPayload {
   result: "DEATH" | "NO_DEATH";
   mowgliTransformed: boolean;
-}
-
-export interface AdminResolveTiePayload {
-  /** used when tieResolutionRule is ADMIN_DECIDES */
-  targetId: string | null;
 }
 
 export interface AdminStatePayload {

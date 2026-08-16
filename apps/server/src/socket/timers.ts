@@ -77,7 +77,6 @@ const PHASE_TIMER_KEY: Partial<Record<Phase, keyof TimerConfig>> = {
   DAY_VOTE: "dayVote",
   DAY_VOTE_RESULT: "dayVoteResult",
   TIE_DEFENSE: "tieDefense",
-  TIE_REVOTE: "tieRevote",
 };
 
 export function clearPhaseTimer(code: string): void {
@@ -239,11 +238,6 @@ export function schedulePhaseTimer(io: Server, engine: GameEngine): void {
         // vote recorded) and advance the queue. If that was the last voter,
         // skipCurrentDayVoter() itself triggers the tally/phase transition.
         engine.skipCurrentDayVoter();
-      } else if (phase === "TIE_REVOTE") {
-        // The one deliberately-manual checkpoint still gets a safety net:
-        // if nobody (Chef/Admin) resolves it in time, break the tie at
-        // random rather than freeze a fully-automatic game forever.
-        engine.autoResolveTieRevoteIfPending();
       } else {
         forceNextPhase(engine);
       }

@@ -373,7 +373,6 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
                 [
                   ["chasseurShot", "Tir du Chasseur"],
                   ["chefSuccession", "Succession du Chef"],
-                  ["tieRevote", "Égalité non résolue"],
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="flex flex-col gap-1">
@@ -677,9 +676,6 @@ function DashboardBody({ admin }: { admin: AdminStatePayload }) {
           })}
         </ul>
 
-        {admin.state.tiedPlayerIds.length > 0 && admin.state.phase === "TIE_REVOTE" && (
-          <TieResolver admin={admin} />
-        )}
       </section>
 
       <section className="card space-y-2">
@@ -699,21 +695,3 @@ function DashboardBody({ admin }: { admin: AdminStatePayload }) {
   );
 }
 
-function TieResolver({ admin }: { admin: AdminStatePayload }) {
-  return (
-    <div className="border border-blood-500/40 rounded-lg p-3 space-y-2">
-      <p className="text-sm text-blood-300">Égalité persistante — résolution manuelle requise.</p>
-      <PlayerList
-        players={admin.state.players.filter((p) => admin.state.tiedPlayerIds.includes(p.id))}
-        selectable
-        onSelect={(targetId) => emitWithAck(SOCKET_EVENTS.ADMIN_RESOLVE_TIE, { targetId })}
-      />
-      <button
-        className="btn-secondary"
-        onClick={() => emitWithAck(SOCKET_EVENTS.ADMIN_RESOLVE_TIE, { targetId: null })}
-      >
-        Personne n&apos;est éliminé
-      </button>
-    </div>
-  );
-}

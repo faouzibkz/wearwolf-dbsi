@@ -45,7 +45,7 @@ Workspaces npm (`package.json` racine) : `npm run build` construit dans l'ordre 
 
 `GameEngine.ts` est la classe centrale : elle possède l'état (`InternalState` — joueurs, phase, votes, timers logiques) et expose des méthodes d'action (`addPlayer`, `castDayVote`, `resolveNightActions`, etc.). Chaque partie tourne dans une instance séparée, **en mémoire**, tenue par `gameRegistry` côté serveur (voir §4.1).
 
-Les **phases** (`packages/shared/src/types.ts`, `PHASES`) : `LOBBY → CHEF_CANDIDACY → CHEF_DEBATE → CHEF_VOTE → CHEF_REVEAL → DAY_1_DISCUSSION → NIGHT → MORNING → DAY_DISCUSSION → [CHEF_SECOND_DEBATE] → DAY_VOTE → DAY_VOTE_RESULT → [TIE_DEFENSE → TIE_REVOTE] → ... boucle NIGHT/DAY ... → ENDED`.
+Les **phases** (`packages/shared/src/types.ts`, `PHASES`) : `LOBBY → CHEF_CANDIDACY → CHEF_DEBATE → CHEF_VOTE → CHEF_REVEAL → DAY_1_DISCUSSION → NIGHT → MORNING → DAY_DISCUSSION → [CHEF_SECOND_DEBATE] → DAY_VOTE → DAY_VOTE_RESULT → [TIE_DEFENSE → DAY_VOTE (round 2)] → ... boucle NIGHT/DAY ... → ENDED`. L'égalité au vote est résolue de façon fixe, non configurable : une égalité au round 1 ouvre `TIE_DEFENSE` puis un unique second tour où les candidats à égalité ne votent plus eux-mêmes (seul le reste du village vote, uniquement pour ces candidats) ; si ce second tour est à nouveau une égalité, personne n'est éliminé et la partie continue.
 
 Chaque **rôle** (`packages/game-engine/src/roles/*.ts`) est un `RoleModule` : une nuit priority (ordre de résolution), un `shortDescription`, et sa propre logique d'action de nuit si applicable. Le seul fichier à modifier pour ajouter un rôle est `roles/registry.ts` (le registre) plus le nouveau module lui-même — jamais `GameEngine.ts`.
 

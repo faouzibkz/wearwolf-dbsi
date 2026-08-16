@@ -9,12 +9,18 @@ import * as SpeakerQueue from "./SpeakerQueue";
  * with the Chef always going last regardless of where they landed in that
  * order.
  *
- * Important distinction from the tied-players concept: this queue is who
- * gets a TURN TO VOTE, which is every alive player, every round — it is
- * NOT the same as `dayVote.tiedIds` (who you're allowed to VOTE FOR),
- * which only narrows in round 2+. A player who isn't tied still gets a
- * turn in the re-vote; they just can't vote for someone outside the tied
- * set (that eligibility check already lives in VoteManager.castDayVote).
+ * Round 1 (or any fresh, untied vote): the queue is every alive player —
+ * this is who gets a TURN TO VOTE, which is NOT the same thing as
+ * `dayVote.tiedIds` (who you're allowed to VOTE FOR), a concept that
+ * doesn't exist yet in round 1.
+ *
+ * Round 2 (the one and only re-vote, held after a round-1 tie's defense
+ * speeches): the previously-tied candidates no longer get a turn at all —
+ * only the rest of the village votes, and only for the tied candidates
+ * (that target-eligibility check lives in VoteManager.castDayVote). If
+ * this second round ties again, nobody dies — see
+ * VoteManager.resolveRepeatedTie — the game simply moves on to the next
+ * phase. There is no round 3.
  */
 function buildVoteOrder(ctx: EngineContext): string[] {
   const chefId = ctx.state.chef.electedId;
@@ -30,8 +36,12 @@ function buildVoteOrder(ctx: EngineContext): string[] {
     seen.add(id);
     return true;
   });
-  const withoutChef = deduped.filter((id) => id !== chefId);
-  return chefId && deduped.includes(chefId) ? [...withoutChef, chefId] : withoutChef;
+  // Round 2+: the tied candidates being voted on this round don't get a
+  // turn in their own re-vote — only the rest of the village does.
+  const tiedIds = ctx.state.dayVote.round >= 2 ? new Set(ctx.state.dayVote.tiedIds) : null;
+  const eligible = tiedIds ? deduped.filter((id) => !tiedIds.has(id)) : deduped;
+  const withoutChef = eligible.filter((id) => id !== chefId);
+  return chefId && eligible.includes(chefId) ? [...withoutChef, chefId] : withoutChef;
 }
 
 export function startDayVoteQueue(ctx: EngineContext): void {

@@ -107,7 +107,7 @@ describe("DAY_VOTE turn queue (feature 3: sequential per-player vote)", () => {
     expect(engine.getCurrentDayVoterId()).toBeNull();
   });
 
-  it("rebuilds a fresh queue (all alive players, Chef last again) for round 2 after a tie", () => {
+  it("rebuilds a fresh queue for round 2 after a tie — excluding the tied candidates themselves, Chef still last", () => {
     const names = ["Chef", "B", "C", "D"];
     const { engine, ids } = bootToDayVote(names, 9);
 
@@ -119,8 +119,10 @@ describe("DAY_VOTE turn queue (feature 3: sequential per-player vote)", () => {
     engine.endTieDefense();
     expect(engine.getPhase()).toBe("DAY_VOTE");
 
+    // Round 2: C and D (the tied candidates) don't get a turn in their own
+    // re-vote — only Chef and B (never tied) do, Chef still last.
     const round2Order = engine.getPublicState().dayVoteOrder!;
-    expect(new Set(round2Order)).toEqual(new Set(names.map((n) => ids[n]!)));
+    expect(new Set(round2Order)).toEqual(new Set([ids.Chef!, ids.B!]));
     expect(round2Order[round2Order.length - 1]).toBe(ids.Chef);
   });
 });

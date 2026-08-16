@@ -359,13 +359,11 @@ export default function PlayPage() {
           the admin's skip button, scoped live to whoever currently holds
           state.chefId (so it correctly transfers on succession and
           disappears the instant the Chef dies). Excluded from LOBBY/ENDED
-          (nothing to skip) and TIE_REVOTE (that needs an actual decision —
-          who to eliminate, or nobody — not a generic skip). */}
+          (nothing to skip). */}
       {me?.isAlive &&
         state.chefId === me.id &&
         state.phase !== "LOBBY" &&
-        state.phase !== "ENDED" &&
-        state.phase !== "TIE_REVOTE" && (
+        state.phase !== "ENDED" && (
           <div className="flex justify-center items-center gap-2">
             {!confirmingChefSkip ? (
               <button
@@ -921,17 +919,6 @@ function PhaseView({
               ))}
             </ul>
           )}
-        </section>
-      );
-
-    case "TIE_REVOTE":
-      return (
-        <section className="card text-center space-y-3 py-6">
-          <h2 className="font-display text-lg text-blood-300">⚖️ Égalité persistante</h2>
-          <p className="text-sm text-night-100/70">
-            En attente d&apos;une décision (Chef du village ou Maître du Jeu) pour départager :
-          </p>
-          <PlayerList players={state.players.filter((p) => state.tiedPlayerIds.includes(p.id))} />
         </section>
       );
 

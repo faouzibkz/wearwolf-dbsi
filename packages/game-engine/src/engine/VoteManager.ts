@@ -1,20 +1,15 @@
-import type { TieResolutionRule } from "@loupgarou/shared";
 import type { EngineContext } from "../internalTypes";
-import { shuffle } from "../util/shuffle";
 import { processDeaths } from "./DeathQueue";
 
 export interface DayVoteOutcome {
   eliminatedId: string | null;
   tie: boolean;
   tiedIds: string[];
-  needsManualResolution: boolean;
   /**
-   * True only when the vote is still unresolved and another
-   * defense-then-revote round must happen (round 1 tie, or a repeated tie
-   * under the REPEAT_DEFENSE rule). False for every other outcome —
-   * including NO_ELIMINATION/RANDOM ties and manual-resolution parking —
-   * because those have either already finished or are waiting on a single
-   * decision rather than another full defense round.
+   * True only when the vote is still unresolved and the one-and-only
+   * defense-then-revote round must happen (a round 1 tie). Always false
+   * afterwards — a round 2 tie is resolved immediately as "nobody dies",
+   * not parked for another round. See resolveRepeatedTie.
    */
   awaitingAnotherRound: boolean;
 }
@@ -50,6 +45,13 @@ export function computeLiveVoteTally(ctx: EngineContext): Record<string, number>
 export function castDayVote(ctx: EngineContext, voterId: string, targetId: string): void {
   const voter = ctx.getPlayer(voterId);
   if (!voter.isAlive) throw new Error("Un joueur mort ne peut pas voter.");
+  // Round 2+ (the one re-vote after a tie): the tied candidates being
+  // voted on don't get to vote in their own re-vote at all — belt-and-
+  // suspenders check, DayVoteQueue.buildVoteOrder already excludes them
+  // from ever getting a turn in the first place.
+  if (ctx.state.dayVote.round >= 2 && ctx.state.dayVote.tiedIds.includes(voterId)) {
+    throw new Error("Les joueurs à égalité ne peuvent pas voter lors du second tour.");
+  }
   // The vote is now a per-player turn queue (DayVoteQueue.ts), not a free-
   // for-all — only whoever's turn it currently is may cast right now.
   if (ctx.state.dayVoteQueue) {
@@ -84,13 +86,10 @@ export function castDayVote(ctx: EngineContext, voterId: string, targetId: strin
 
 /**
  * Tally the current round. Returns the outcome; GameEngine decides how to
- * transition phases based on it (eliminate + move to NIGHT, open
- * TIE_DEFENSE, or pause awaiting admin/chef manual resolution).
+ * transition phases based on it (eliminate + move to NIGHT, or open
+ * TIE_DEFENSE for the one round-1-tie re-vote).
  */
-export function tallyDayVote(
-  ctx: EngineContext,
-  rng: () => number = Math.random,
-): DayVoteOutcome {
+export function tallyDayVote(ctx: EngineContext): DayVoteOutcome {
   const dayVote = ctx.state.dayVote;
   const scores = new Map<string, number>();
 
@@ -127,7 +126,6 @@ export function tallyDayVote(
       eliminatedId,
       tie: false,
       tiedIds: [],
-      needsManualResolution: false,
       awaitingAnotherRound: false,
     };
   }
@@ -145,111 +143,28 @@ export function tallyDayVote(
       eliminatedId: null,
       tie: true,
       tiedIds: topIds,
-      needsManualResolution: false,
       awaitingAnotherRound: true,
     };
   }
 
-  return resolveRepeatedTie(ctx, topIds, rng);
+  return resolveRepeatedTie(ctx, topIds);
 }
 
-function resolveRepeatedTie(
-  ctx: EngineContext,
-  topIds: string[],
-  rng: () => number,
-): DayVoteOutcome {
-  const rule: TieResolutionRule = ctx.state.config.tieResolutionRule;
-  const dayVote = ctx.state.dayVote;
-
-  switch (rule) {
-    case "REPEAT_DEFENSE":
-      dayVote.tiedIds = topIds;
-      dayVote.round += 1;
-      dayVote.votes.clear();
-      return {
-        eliminatedId: null,
-        tie: true,
-        tiedIds: topIds,
-        needsManualResolution: false,
-        awaitingAnotherRound: true,
-      };
-    case "NO_ELIMINATION":
-      resetDayVote(ctx);
-      ctx.state.corbeauMarkedPlayerId = null;
-      ctx.log("Égalité persistante — personne n'est éliminé (règle : pas d'élimination).");
-      return {
-        eliminatedId: null,
-        tie: true,
-        tiedIds: topIds,
-        needsManualResolution: false,
-        awaitingAnotherRound: false,
-      };
-    case "RANDOM": {
-      const chosen = shuffle(topIds, rng)[0]!;
-      processDeaths(ctx, [{ playerId: chosen, cause: "VOTE_ELIMINATION" }]);
-      ctx.recordEvent({
-        type: "DAY_VOTE_ELIMINATION",
-        day: ctx.state.dayNumber,
-        round: dayVote.round,
-        targetId: chosen,
-      });
-      resetDayVote(ctx);
-      ctx.state.corbeauMarkedPlayerId = null;
-      ctx.log("Égalité persistante — élimination tirée au sort.");
-      return {
-        eliminatedId: chosen,
-        tie: true,
-        tiedIds: topIds,
-        needsManualResolution: false,
-        awaitingAnotherRound: false,
-      };
-    }
-    case "CHEF_DECIDES":
-    case "ADMIN_DECIDES":
-      dayVote.tiedIds = topIds;
-      ctx.state.pendingTieResolutionRule = rule;
-      return {
-        eliminatedId: null,
-        tie: true,
-        tiedIds: topIds,
-        needsManualResolution: true,
-        awaitingAnotherRound: false,
-      };
-    default:
-      resetDayVote(ctx);
-      return {
-        eliminatedId: null,
-        tie: true,
-        tiedIds: topIds,
-        needsManualResolution: false,
-        awaitingAnotherRound: false,
-      };
-  }
-}
-
-/** Used for CHEF_DECIDES / ADMIN_DECIDES: apply the manually chosen target (or null = no elimination). */
-export function resolveTieManually(ctx: EngineContext, targetId: string | null): DayVoteOutcome {
-  if (targetId) {
-    if (!ctx.state.dayVote.tiedIds.includes(targetId)) {
-      throw new Error("La cible doit faire partie des joueurs à égalité.");
-    }
-    processDeaths(ctx, [{ playerId: targetId, cause: "VOTE_ELIMINATION" }]);
-    ctx.recordEvent({
-      type: "DAY_VOTE_ELIMINATION",
-      day: ctx.state.dayNumber,
-      round: ctx.state.dayVote.round,
-      targetId,
-    });
-  }
-  const tiedIds = ctx.state.dayVote.tiedIds;
+/**
+ * Round 2 (the only re-vote — see DayVoteQueue.ts) tied again. This is a
+ * hard-coded, non-configurable rule: nobody dies and the game moves
+ * straight on to the next phase. There used to be a whole
+ * REPEAT_DEFENSE/RANDOM/CHEF_DECIDES/ADMIN_DECIDES ruleset here; it's gone
+ * — a persistent tie always means no elimination, full stop.
+ */
+function resolveRepeatedTie(ctx: EngineContext, topIds: string[]): DayVoteOutcome {
   resetDayVote(ctx);
   ctx.state.corbeauMarkedPlayerId = null;
-  ctx.state.pendingTieResolutionRule = null;
+  ctx.log("Égalité persistante — personne n'est éliminé.");
   return {
-    eliminatedId: targetId,
+    eliminatedId: null,
     tie: true,
-    tiedIds,
-    needsManualResolution: false,
+    tiedIds: topIds,
     awaitingAnotherRound: false,
   };
 }

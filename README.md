@@ -180,17 +180,20 @@ npm run typecheck --workspace=apps/web
 
 Everything in `GameConfig` (`packages/shared/src/types.ts`) is admin-configurable from the lobby
 screen before start: role counts, all five timers, Loup blanc's active-nights rule (every night /
-every second night / specific nights), the day-vote tie resolution rule (repeat defense / no
-elimination / Chef decides / Admin decides / random), the Chef's vote-bonus threshold, and
-automatic vs. manual phase progression.
+every second night / specific nights), the Chef's vote-bonus threshold, and automatic vs. manual
+phase progression. Day-vote tie resolution is no longer configurable — see below.
 
 ## Extension points beyond roles
 
 - **Victory conditions**: `packages/game-engine/src/engine/VictoryConditions.ts` exports a
   `VICTORY_CONDITIONS` array of `(ctx) => Team | null` functions, checked in order. Add a function,
   push it onto the array — e.g. a solo Loup blanc win condition.
-- **Tie resolution rules**: `TieResolutionRule` in `packages/shared/src/types.ts` +
-  `resolveRepeatedTie` in `packages/game-engine/src/engine/VoteManager.ts`.
+- **Tie resolution**: hard-coded, not configurable. A round-1 tie always opens `TIE_DEFENSE`
+  (the tied candidates each get a defense turn) followed by exactly one re-vote (round 2), in
+  which the tied candidates themselves don't get a turn to vote — only the rest of the village
+  does, and only for the tied candidates. If round 2 ties again, nobody is eliminated and the game
+  moves straight on — see `resolveRepeatedTie` and `buildVoteOrder` in
+  `packages/game-engine/src/engine/VoteManager.ts` / `DayVoteQueue.ts`.
 - **Loup blanc's active-night rule**: `isNightActive()` in `packages/game-engine/src/roles/loupBlanc.ts`.
 - **i18n**: all user-facing strings currently live inline in `apps/web` components and in
   `ROLE_METADATA` (French). There's no i18n library wired up yet — that's the next step for

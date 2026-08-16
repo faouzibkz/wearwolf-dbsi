@@ -1,4 +1,4 @@
-import type { GameConfig, LogEntry, Phase, RoleId, Team, TieResolutionRule } from "@loupgarou/shared";
+import type { GameConfig, LogEntry, Phase, RoleId, Team } from "@loupgarou/shared";
 import type { GameEvent } from "./events";
 
 /**
@@ -220,7 +220,6 @@ export interface GameInternalState {
    * GameEngine.chooseChefSuccessor(). Null when no succession is pending.
    */
   pendingChefSuccessionDeadChefId: string | null;
-  pendingTieResolutionRule: TieResolutionRule | null;
   rolesRevealedToPlayers: boolean;
   /** One-shot latch for GameEngine.consumeGameEndedNotification() — see that method's doc comment. */
   gameEndedNotified: boolean;

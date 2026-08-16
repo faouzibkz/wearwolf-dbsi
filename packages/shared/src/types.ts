@@ -74,7 +74,6 @@ export const PHASES = [
   "DAY_VOTE",
   "DAY_VOTE_RESULT",
   "TIE_DEFENSE",
-  "TIE_REVOTE",
   "ENDED",
 ] as const;
 
@@ -84,13 +83,6 @@ export type LoupBlancRule =
   | { mode: "EVERY_NIGHT" }
   | { mode: "EVERY_SECOND_NIGHT" }
   | { mode: "SPECIFIC_NIGHTS"; nights: number[] };
-
-export type TieResolutionRule =
-  | "REPEAT_DEFENSE"
-  | "NO_ELIMINATION"
-  | "CHEF_DECIDES"
-  | "ADMIN_DECIDES"
-  | "RANDOM";
 
 export interface TimerConfig {
   /** seconds */
@@ -114,8 +106,6 @@ export interface TimerConfig {
   chasseurShot: number;
   /** Safety-net deadline for a pending Chef succession before a random successor is auto-picked. */
   chefSuccession: number;
-  /** Safety-net deadline for a manually-resolved tie (TIE_REVOTE) before it's broken at random. */
-  tieRevote: number;
   /**
    * Safety-net deadline for the post-game MVP vote (see
    * apps/server/src/mvp/mvpVotingRegistry.ts): if every eligible player
@@ -154,7 +144,6 @@ export const DEFAULT_TIMERS: TimerConfig = {
   dayVoteResult: 6,
   chasseurShot: 30,
   chefSuccession: 30,
-  tieRevote: 30,
   mvpVote: 120,
 };
 
@@ -203,7 +192,6 @@ export interface GameConfig {
   roleCounts: Partial<Record<RoleId, number>>;
   timers: TimerConfig;
   loupBlancRule: LoupBlancRule;
-  tieResolutionRule: TieResolutionRule;
   /** once alive player count is <= this, the Chef's vote bonus is disabled */
   chefVoteBonusThreshold: number;
   /**
@@ -260,7 +248,6 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   },
   timers: DEFAULT_TIMERS,
   loupBlancRule: { mode: "EVERY_SECOND_NIGHT" },
-  tieResolutionRule: "REPEAT_DEFENSE",
   chefVoteBonusThreshold: 6,
   secondDebateSlots: 2,
   autoProgress: false,

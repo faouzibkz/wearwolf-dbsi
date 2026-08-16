@@ -5,9 +5,9 @@ import { castDayVotesInOrder, seededRng } from "./helpers";
 /**
  * Covers the "fully automatic game" work: CHEF_CANDIDACY auto-pick,
  * CHEF_REVEAL / DAY_VOTE_RESULT announcement phases, the pending-blocker
- * (Chasseur shot / Chef succession) auto-resolve safety net, the TIE_REVOTE
- * safety net, and the night-prompt "only re-prompt players who haven't
- * acted yet" fix.
+ * (Chasseur shot / Chef succession) auto-resolve safety net, the
+ * persistent-tie hard-coded no-elimination rule, and the night-prompt
+ * "only re-prompt players who haven't acted yet" fix.
  */
 
 describe("CHEF_CANDIDACY auto-progress", () => {
@@ -211,12 +211,9 @@ describe("pending-blocker auto-resolve safety net (resolvePendingBlockersIfAny)"
   });
 });
 
-describe("TIE_REVOTE safety net (autoResolveTieRevoteIfPending)", () => {
-  function bootToPersistentTie(names: string[], seed: number, rule: "CHEF_DECIDES" | "ADMIN_DECIDES") {
-    const engine = GameEngine.createGame(
-      { roleCounts: { LOUP_GAROU: 1 }, tieResolutionRule: rule } as any,
-      seededRng(seed),
-    );
+describe("persistent (round 2) tie: hard-coded no-elimination, no manual resolution", () => {
+  function bootToPersistentTie(names: string[], seed: number) {
+    const engine = GameEngine.createGame({ roleCounts: { LOUP_GAROU: 1 } } as any, seededRng(seed));
     const ids: Record<string, string> = {};
     for (const n of names) ids[n] = engine.addPlayer(n).id;
     engine.startGame();
@@ -235,34 +232,46 @@ describe("TIE_REVOTE safety net (autoResolveTieRevoteIfPending)", () => {
     castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! }); // -> TIE_DEFENSE
     engine.endTieDefense(); // -> DAY_VOTE round 2
 
-    // Round 2 ties again on the same pair -> rule kicks in -> TIE_REVOTE.
-    castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! });
-
     return { engine, ids };
   }
 
-  it("breaks the tie at random once the deadline passes, instead of freezing the game", () => {
+  it("round 2 excludes the tied candidates from voting at all — only the rest of the village gets a turn", () => {
     const names = ["A", "B", "C", "D"];
-    const { engine, ids } = bootToPersistentTie(names, 9, "CHEF_DECIDES");
+    const { engine, ids } = bootToPersistentTie(names, 9);
 
-    expect(engine.getPhase()).toBe("TIE_REVOTE");
-    const tiedIds = engine.getPublicState().tiedPlayerIds;
-    expect(tiedIds.sort()).toEqual([ids.C, ids.D].sort());
-
-    engine.autoResolveTieRevoteIfPending();
-
-    // Resolved: either eliminated someone from the tied pair, or the game
-    // ended (small 4-player game, an elimination could tip victory) — either
-    // way it's no longer stuck at TIE_REVOTE.
-    expect(engine.getPhase()).not.toBe("TIE_REVOTE");
-    expect(engine.getPublicState().tiedPlayerIds).toEqual([]);
+    // Only A and B (not tied) should ever come up as the current voter —
+    // C and D (the tied candidates) don't get a turn in their own re-vote.
+    const seenVoters = new Set<string>();
+    let voterId = engine.getCurrentDayVoterId();
+    while (voterId !== null) {
+      seenVoters.add(voterId);
+      engine.skipCurrentDayVoter();
+      voterId = engine.getCurrentDayVoterId();
+    }
+    expect(seenVoters.has(ids.C!)).toBe(false);
+    expect(seenVoters.has(ids.D!)).toBe(false);
   });
 
-  it("is a no-op outside TIE_REVOTE", () => {
-    const engine = GameEngine.createGame({ roleCounts: { LOUP_GAROU: 1 } }, seededRng(2));
-    expect(engine.getPhase()).toBe("LOBBY");
-    expect(() => engine.autoResolveTieRevoteIfPending()).not.toThrow();
-    expect(engine.getPhase()).toBe("LOBBY");
+  it("rejects a tied candidate trying to vote in the round-2 re-vote even if attempted directly", () => {
+    const names = ["A", "B", "C", "D"];
+    const { engine, ids } = bootToPersistentTie(names, 9);
+    expect(() => engine.castDayVote(ids.C!, ids.D!)).toThrow();
+  });
+
+  it("a repeated (round 2) tie hard-resolves as nobody dying and the game moves on — no TIE_REVOTE parking", () => {
+    const names = ["A", "B", "C", "D"];
+    const { engine, ids } = bootToPersistentTie(names, 9);
+
+    // Round 2: only A and B vote (C and D excluded); split their votes so
+    // the tie between C and D persists.
+    const outcome = castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! });
+
+    expect(outcome?.eliminatedId).toBeNull();
+    expect(outcome?.tie).toBe(true);
+    // Fully resolved immediately — not parked waiting on a manual decision.
+    expect(engine.getPhase()).not.toBe("DAY_VOTE");
+    const publicPlayers = engine.getPublicState().players;
+    expect(publicPlayers.every((p) => p.isAlive)).toBe(true);
   });
 });
 

@@ -47,7 +47,7 @@ describe("victory conditions", () => {
 });
 
 describe("tie resolution", () => {
-  it("opens a defense + revote when the day vote ties, restricted to tied players", () => {
+  it("opens a defense + revote when the day vote ties, restricted to tied players — and excludes them from voting", () => {
     const names = ["A", "B", "C", "D"];
     const { engine, ids } = bootTo(names, { LOUP_GAROU: 1 }, 9);
     engine.resolveNightAndProceed();
@@ -61,24 +61,30 @@ describe("tie resolution", () => {
 
     engine.endTieDefense();
     expect(engine.getPhase()).toBe("DAY_VOTE");
+    // The tied candidates (C, D) don't get a turn at all in the re-vote —
+    // only A and B (never tied) do.
+    const order = engine.getPublicState().dayVoteOrder ?? [];
+    expect(order.sort()).toEqual([ids.A, ids.B].sort());
     const currentVoter = engine.getCurrentDayVoterId()!;
     expect(() => engine.castDayVote(currentVoter, ids.B!)).toThrow(); // B not in tied set
     const finalOutcome = castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.C! });
     expect(finalOutcome?.eliminatedId).toBe(ids.C);
   });
 
-  it("NO_ELIMINATION rule ends a persistent tie without killing anyone", () => {
+  it("a persistent (round 2) tie is hard-resolved as no elimination — no configurable rule, no manual step", () => {
     const names = ["A", "B", "C", "D"];
-    const { engine, ids } = bootTo(names, { LOUP_GAROU: 1 }, 9, { tieResolutionRule: "NO_ELIMINATION" });
+    const { engine, ids } = bootTo(names, { LOUP_GAROU: 1 }, 9);
     engine.resolveNightAndProceed();
     engine.proceedFromMorningToDay();
     engine.endDayDiscussion();
 
     castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! }); // first tie -> TIE_DEFENSE
     engine.endTieDefense();
-    const outcome = castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! }); // tie again -> rule kicks in
+    const outcome = castDayVotesInOrder(engine, { [ids.A!]: ids.C!, [ids.B!]: ids.D! }); // tie again -> hard no-elimination
 
     expect(outcome?.eliminatedId).toBeNull();
+    expect(outcome?.tie).toBe(true);
+    expect(engine.getPhase()).not.toBe("DAY_VOTE"); // resolved immediately, not parked
     const publicPlayers = engine.getPublicState().players;
     expect(publicPlayers.every((p) => p.isAlive)).toBe(true);
   });

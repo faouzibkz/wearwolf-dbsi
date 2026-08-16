@@ -77,8 +77,6 @@ export function forceNextPhase(engine: GameEngine): void {
       }
       return;
     }
-    case "TIE_REVOTE":
-      throw new Error("Une égalité doit être résolue manuellement (Chef ou Admin).");
     case "ENDED":
       throw new Error("La partie est terminée.");
     default:
