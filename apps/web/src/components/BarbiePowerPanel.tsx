@@ -17,11 +17,30 @@ export function BarbiePowerPanel({
 }: {
   players: PlayerPublic[];
   myId: string;
-  onUse: (targetId: string) => void;
+  onUse: (targetId: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  // 17/08/2026: "Confirmer" used to call onUse fire-and-forget with zero
+  // feedback — for a one-shot, irreversible power this is the worst place
+  // for a silent failure. Same submit/error pattern used everywhere else.
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const eligible = players.filter((p) => p.id !== myId && p.isAlive);
+
+  async function confirmUse(targetId: string) {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await onUse(targetId);
+      // No local "sent" state to flip here — success is reflected by the
+      // BARBIE_REVEAL_RESULT overlay (see play/[code]/page.tsx's
+      // barbieReveal state) taking over the whole screen once it arrives.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Échec de l'envoi. Réessayez.");
+      setSubmitting(false);
+    }
+  }
 
   if (!open) {
     return (
@@ -46,11 +65,16 @@ export function BarbiePowerPanel({
           Si c&apos;est un loup : il/elle meurt et vous devenez Chef du village. Sinon : vous mourrez
           tous/toutes les deux. Cette action est irréversible.
         </p>
+        {error && <p className="text-xs text-blood-400">{error}</p>}
         <div className="flex justify-center gap-2">
-          <button className="btn-primary" onClick={() => onUse(pending)}>
+          <button className="btn-primary disabled:opacity-40" disabled={submitting} onClick={() => confirmUse(pending)}>
             Confirmer
           </button>
-          <button className="btn-secondary" onClick={() => setPending(null)}>
+          <button
+            className="btn-secondary disabled:opacity-40"
+            disabled={submitting}
+            onClick={() => setPending(null)}
+          >
             Annuler
           </button>
         </div>

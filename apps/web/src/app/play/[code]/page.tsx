@@ -566,22 +566,41 @@ function PhaseView({
   // makes the intent obvious).
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmingAlienNightfall, setConfirmingAlienNightfall] = useState(false);
-  const [dayVoteError, setDayVoteError] = useState<string | null>(null);
+  // Shared by the two death-triggered pickers below (Chasseur's revenge
+  // shot, Chef succession) — never rendered at the same time, so one pair
+  // of state is enough. 17/08/2026: both used to fire-and-forget with no
+  // error handling at all — the exact same "looks like nothing happened"
+  // class of bug the Prêtre/night-action fix addressed elsewhere, just
+  // never extended to these two. See NightPromptPanel's submitAndConfirm
+  // for the pattern this mirrors.
+  const [actionSubmitting, setActionSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (chasseurTargets) {
     return (
       <section className="card">
         <h2 className="font-display text-lg text-blood-300 mb-3">🏹 Vous êtes mort(e) — Chasseur</h2>
         <p className="text-sm text-night-100/80 mb-3">Choisissez un joueur à emporter avec vous.</p>
+        {actionError && <p className="text-xs text-blood-400 mb-2">{actionError}</p>}
         <PlayerList
           players={state.players.filter((p) => chasseurTargets.includes(p.id))}
           selectable
           selectedId={selectedId}
+          disabledIds={actionSubmitting ? chasseurTargets : []}
           onSelect={async (targetId) => {
             setSelectedId(targetId);
-            const { emitWithAck } = await import("@/lib/socket");
-            await emitWithAck(SOCKET_EVENTS.CHASSEUR_SHOOT, { targetId });
-            onClearChasseur();
+            setActionError(null);
+            setActionSubmitting(true);
+            try {
+              const { emitWithAck } = await import("@/lib/socket");
+              await emitWithAck(SOCKET_EVENTS.CHASSEUR_SHOOT, { targetId });
+              onClearChasseur();
+            } catch (err) {
+              setSelectedId(null);
+              setActionError(err instanceof Error ? err.message : "Échec de l'envoi. Réessayez.");
+            } finally {
+              setActionSubmitting(false);
+            }
           }}
         />
       </section>
@@ -595,15 +614,26 @@ function PhaseView({
         <p className="text-sm text-night-100/80 mb-3">
           Avant de vous éteindre, désignez votre successeur à la tête du village.
         </p>
+        {actionError && <p className="text-xs text-blood-400 mb-2">{actionError}</p>}
         <PlayerList
           players={state.players.filter((p) => chefSuccessionTargets.includes(p.id))}
           selectable
           selectedId={selectedId}
+          disabledIds={actionSubmitting ? chefSuccessionTargets : []}
           onSelect={async (successorId) => {
             setSelectedId(successorId);
-            const { emitWithAck } = await import("@/lib/socket");
-            await emitWithAck(SOCKET_EVENTS.CHEF_SUCCESSION_CHOOSE, { successorId });
-            onClearChefSuccession();
+            setActionError(null);
+            setActionSubmitting(true);
+            try {
+              const { emitWithAck } = await import("@/lib/socket");
+              await emitWithAck(SOCKET_EVENTS.CHEF_SUCCESSION_CHOOSE, { successorId });
+              onClearChefSuccession();
+            } catch (err) {
+              setSelectedId(null);
+              setActionError(err instanceof Error ? err.message : "Échec de l'envoi. Réessayez.");
+            } finally {
+              setActionSubmitting(false);
+            }
           }}
         />
       </section>
@@ -1172,8 +1202,6 @@ function PhaseView({
           </p>
           {!me?.isAlive && <p className="text-xs text-night-100/60 text-center">Vous êtes spectateur(trice).</p>}
 
-          {dayVoteError && <p className="text-xs text-blood-400 text-center">{dayVoteError}</p>}
-
           <LiveVoteList
             candidates={votable}
             allPlayers={state.players}
@@ -1181,18 +1209,18 @@ function PhaseView({
             dayVoteTally={state.dayVoteTally}
             myId={me?.id ?? null}
             interactive={isMyTurn}
+            // Deliberately no try/catch here — LiveVoteList already awaits
+            // this itself and has its own error+retry handling (resets
+            // `submitting`/`armedId` on rejection so the vote stays
+            // clickable). An earlier fix here wrapped this in a try/catch
+            // that swallowed the error before LiveVoteList's own catch ever
+            // saw it — which meant on a real failure, LiveVoteList's
+            // `submitting` flag never got reset and the vote stayed
+            // PERMANENTLY locked with no way to retry short of a page
+            // reload. Removed 17/08/2026 — let the rejection propagate.
             onSelect={async (targetId) => {
-              setDayVoteError(null);
-              try {
-                const { emitWithAck } = await import("@/lib/socket");
-                await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
-              } catch (err) {
-                // Previously silent: a rejected/dropped vote (stale turn
-                // state, a network blip) left the player thinking they'd
-                // voted with no feedback at all — the reported "sometimes
-                // can't vote" behavior. Now it's visible and retryable.
-                setDayVoteError(err instanceof Error ? err.message : "Échec de l'envoi du vote. Réessayez.");
-              }
+              const { emitWithAck } = await import("@/lib/socket");
+              await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
             }}
           />
 
