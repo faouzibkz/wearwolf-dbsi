@@ -385,6 +385,29 @@ git reset --hard 85f3855   # ⚠️ destructif sur les commits locaux non pouss�
 
 ---
 
+## 21. Correctifs fiabilité : pouvoirs et votes qui restaient bloqués sans erreur (17 août 2026) — ✅ Fait
+
+**Retours d'une vraie soirée de jeu (10 joueurs)** après le lot §19 : la Voyante (sur téléphone) sonde quelqu'un mais rien ne s'affiche, le vote met du temps à se confirmer pour tout le monde, les loups ont du mal à tuer quelqu'un la nuit.
+
+**Cause racine identifiée** : `emitWithAck` (`apps/web/src/lib/socket.ts`), la fonction par laquelle passe CHAQUE action du jeu, n'avait aucun délai d'expiration. Si la connexion d'un téléphone se coupe puis se rétablit en plein milieu d'une requête (le cas réaliste à 10 joueurs sur une connexion Tailscale), le callback d'accusé de réception de l'ancienne connexion reste orphelin pour toujours — la Promise ne se résout ni ne rejette **jamais**. Sans conséquence tant que rien n'attendait cette Promise ; mais le correctif du §19 (attendre un vrai accusé de réception avant de confirmer) a transformé un accusé de réception perdu en bouton bloqué indéfiniment, sans erreur, sans possibilité de réessayer — exactement les trois symptômes remontés.
+
+**Corrigé** :
+- `emitWithAck` a maintenant un délai de 10 secondes (`.timeout()`, Socket.IO) — un accusé de réception perdu échoue proprement au lieu de bloquer indéfiniment, ce qui permet à l'interface d'erreur déjà en place de faire son travail.
+- **Régression trouvée dans mon propre correctif du §19** : le vote du jour avait un `try/catch` redondant qui avalait l'erreur avant que `LiveVoteList` (qui gère déjà correctement `submitting`/l'erreur/la réinitialisation) ne la voie — ce qui bloquait le vote **définitivement** en cas d'échec réel, sans aucun moyen de réessayer sans recharger la page. Supprimé — simplification, pas juste un correctif.
+- **4 pouvoirs jamais couverts par le correctif du §19**, même bug de base (aucune gestion d'erreur du tout) : le tir de vengeance du Chasseur, la succession du Chef, la supposition du Loup Vert, le pouvoir de Barbie. Tous les quatre reçoivent maintenant le même patron `submit`/`erreur`/`réessayer` déjà utilisé partout ailleurs.
+- Vérifié pendant l'audit que le vote du Chef et le vote MVP géraient déjà ça correctement — pas de changement nécessaire là, confirmé et non supposé.
+
+**Commit** : `6590fd1` — **Tag de rollback** : `bugfix-ack-timeout-powers-votes`.
+
+```bash
+git checkout d2ef138   # état juste avant ce lot
+# ou : git reset --hard d2ef138
+```
+
+**Vérifications effectuées** : compilation + vérification de types propres (`docker compose build web`). Aucun changement côté `packages/game-engine`/`apps/server` ce lot-ci, donc la suite `vitest` n'a pas eu besoin d'être relancée (rien qu'elle couvre n'a bougé). **Playtest live toujours non concluant** pour la même raison que §20 : l'outil navigateur automatisé ne peut pas atteindre le serveur Socket.IO depuis cet environnement. À confirmer lors de la prochaine vraie soirée de jeu — c'est précisément ce lot qui est censé corriger les symptômes remontés, donc la confirmation la plus utile sera simplement « est-ce que ça recommence ? ».
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
