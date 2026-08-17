@@ -362,6 +362,29 @@ git reset --hard 85f3855   # ⚠️ destructif sur les commits locaux non pouss�
 
 ---
 
+## 20. Roster des rôles visible par tous les joueurs, toute la partie (17 août 2026) — ✅ Fait
+
+**Demande utilisateur** : des joueurs remontaient régulièrement ne pas avoir entendu l'admin annoncer, au lancement de la partie, quels rôles étaient en jeu cette fois-ci (combien de loups, quels rôles spéciaux) — cette composition n'était dite qu'à voix haute, jamais affichée dans l'app.
+
+**Décisions prises avec l'utilisateur avant implémentation** (3 questions posées, réponses ci-dessous) :
+1. **Visibilité** : bouton flottant persistant, disponible pendant toute la partie (pas juste une popup unique au lancement) — même patron que le bouton Notes existant (§17.7 / §11.7), pour qu'un joueur qui a raté l'annonce puisse vérifier à tout moment.
+2. **Niveau de détail** : juste noms + effectifs (ex. « 3× Loup-Garou, 1× Voyante, 1× Prêtre, 5× Villageois »), pas les descriptions de pouvoir.
+3. **Timing** : complètement indépendant de l'écran de révélation du rôle personnel — uniquement accessible via le bouton flottant, pas d'apparition spéciale liée au moment de la révélation.
+
+**Implémentation** :
+- `GameEngine.getRoleComposition()` (nouveau) : calcule le tally réel des rôles à partir de `state.players` (jamais recopié depuis `config.roleCounts`, qui n'inclut jamais le complément Villageois auto-rempli par `startGame()` — voir sa propre doc).
+- `GameStatePublic.roleComposition` (nouveau champ) : `null` pendant `LOBBY` (rôles pas encore distribués — afficher un roster à ce moment n'aurait aucun sens), rempli automatiquement dès que la partie démarre, diffusé via le canal `GAME_STATE` existant (aucun nouvel événement socket nécessaire).
+- `components/RoleCompositionButton.tsx` (nouveau, web) : bouton flottant en bas à gauche (bouton Notes en bas à droite — jamais de chevauchement), même patron ouverture/fermeture. Ordre d'affichage stable via `ROLE_IDS` (pas l'ordre d'insertion de l'objet).
+- La composition (quels rôles + combien) n'est délibérément PAS un secret — exactement ce qu'un meneur de jeu Loup-Garou en présentiel annonce d'habitude à voix haute avant la partie ; seule l'identité individuelle de chaque joueur reste secrète (`revealedRoleId` continue de ne jamais apparaître pour un joueur vivant).
+
+**Régression détectée et corrigée avant commit** : 4 tests `game-engine` affirmaient qu'aucune chaîne de rôle n'apparaît JAMAIS nulle part dans `getPublicState()` — une assertion trop large qui ne distinguait pas « identité individuelle d'un joueur » (doit rester secrète) de « composition globale de la partie » (maintenant délibérément publique). Corrigés pour vérifier l'invariant réel (aucun `roleId`/`revealedRoleId` individuel ne fuit) plutôt que l'absence totale de toute chaîne de rôle — `deathReveal.test.ts`, `mowgliAndChasseur.test.ts`, `nightResolution.test.ts`, `roleAssignment.test.ts` (ce dernier a aussi gagné un test dédié qui verrouille le nouveau comportement : `null` en LOBBY, tally exact après `startGame()`).
+
+**Commit** : `21f99fc` — **Tag de rollback** : `feature-role-roster`.
+
+**Vérifications effectuées** — la suite `vitest` complète a enfin pu tourner cette session (contournement : `tsconfig.base.json`, absent de l'image Docker `server`, monté manuellement) : **`packages/game-engine` 186/186**, **`packages/rating` 37/37**, **`apps/server` 135/136** (1 échec, `idleCleanup.test.ts` — confirmé préexistant et sans rapport : fichier inchangé depuis avant cette session, `git diff` vide contre `85f3855`, test sensible au temps réel qui échoue de façon reproductible dans cet environnement Docker précis — pas une régression de cette feature, non corrigé ici, à investiguer séparément). Compilation + vérification de types propres (`docker compose build web` et `server`). **Playtest live non concluant** : tentative de créer une vraie partie via le navigateur pour vérifier le rendu du bouton — bloquée par le sandbox de l'outil navigateur lui-même, qui empêche la connexion WebSocket Socket.IO d'atteindre le serveur (confirmé : le serveur ne voit AUCUNE tentative de connexion dans ses logs, alors que de simples requêtes HTTP vers le même port passent sans problème — donc une limite de l'outil, pas un bug CORS/app). Le rendu visuel réel du bouton reste donc à confirmer lors de la prochaine vraie soirée de jeu.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
