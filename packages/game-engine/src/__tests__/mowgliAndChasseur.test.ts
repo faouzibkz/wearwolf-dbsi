@@ -32,8 +32,12 @@ describe("Mowgli transformation", () => {
     const adminRoles = new Map(engine.getAdminRoles().map((r) => [r.playerId, r.roleId]));
     expect(adminRoles.get(ids[mowgli]!)).toBe("LOUP_GAROU");
 
-    // Public state never contains role identifiers.
-    expect(JSON.stringify(engine.getPublicState())).not.toContain("LOUP_GAROU");
+    // Public state never contains an INDIVIDUAL player's role identifier
+    // (roleComposition, a game-wide tally with no player attribution, is a
+    // deliberate documented exception — see deathReveal.test.ts's comment).
+    expect(JSON.stringify({ ...engine.getPublicState(), roleComposition: undefined })).not.toContain(
+      "LOUP_GAROU",
+    );
   });
 });
 

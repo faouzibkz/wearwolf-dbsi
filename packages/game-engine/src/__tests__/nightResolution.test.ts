@@ -74,7 +74,9 @@ describe("night resolution", () => {
     engine.submitNightAction(ids[wolf]!, "KILL_VOTE", ids[victim]!);
     engine.resolveNightAndProceed();
 
-    const json = JSON.stringify(engine.getPublicState());
+    // roleComposition (a game-wide tally, never tied to a specific player)
+    // is a deliberate documented exception — see deathReveal.test.ts.
+    const json = JSON.stringify({ ...engine.getPublicState(), roleComposition: undefined });
     expect(json).not.toContain("LOUP_GAROU");
     expect(engine.getPublicState().lastMorningAnnouncement).toBe("DEATH");
   });

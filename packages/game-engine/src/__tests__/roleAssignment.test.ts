@@ -16,11 +16,29 @@ describe("role assignment", () => {
     expect(roles).toHaveLength(6);
   });
 
-  it("never reveals roles through the public state", () => {
-    const { engine } = makeGameWithPlayers(["A", "B", "C", "D"]);
+  it("never reveals which INDIVIDUAL player holds which role through the public state", () => {
+    const { engine } = makeGameWithPlayers(["A", "B", "C", "D"], { roleCounts: { LOUP_GAROU: 1, VOYANTE: 1 } });
     engine.startGame();
     const publicState = engine.getPublicState();
-    expect(JSON.stringify(publicState)).not.toMatch(/LOUP_GAROU|VOYANTE|VILLAGEOIS/);
+    // No living player's own roleId/revealedRoleId leaks.
+    for (const p of publicState.players) {
+      expect(p).not.toHaveProperty("roleId");
+      expect(p.revealedRoleId).toBeUndefined();
+    }
+  });
+
+  it("DOES expose the game-wide role composition (tally, never player-attributed) once started — the roster players can check all game", () => {
+    const { engine } = makeGameWithPlayers(["A", "B", "C", "D"], { roleCounts: { LOUP_GAROU: 1, VOYANTE: 1 } });
+    // LOBBY: roles aren't assigned yet — showing a roster here would be
+    // meaningless (everyone still holds the pre-assignment placeholder).
+    expect(engine.getPublicState().roleComposition).toBeNull();
+
+    engine.startGame();
+    expect(engine.getPublicState().roleComposition).toEqual({
+      LOUP_GAROU: 1,
+      VOYANTE: 1,
+      VILLAGEOIS: 2,
+    });
   });
 
   it("rejects starting with more configured roles than players", () => {

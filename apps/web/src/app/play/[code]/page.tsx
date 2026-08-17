@@ -46,6 +46,7 @@ import { WolfChat } from "@/components/WolfChat";
 import { AfterlifeChat } from "@/components/AfterlifeChat";
 import { EndGamePanel } from "@/components/EndGamePanel";
 import { NotesButton } from "@/components/NotesButton";
+import { RoleCompositionButton } from "@/components/RoleCompositionButton";
 
 /**
  * Cahier de charge #2 §17.2 — Night presentation. Per-role "wake up" flavor
@@ -477,6 +478,13 @@ export default function PlayPage() {
           game's ended: the server purges notes right at GAME_ENDED, so
           there's nothing left to jot down or read at that point. */}
       {!endStats && <NotesButton />}
+      {/* Player-requested feature (17 août 2026): the role roster used to
+          only ever be announced out loud by the admin at game start — easy
+          to miss. Available from the moment roles are actually assigned
+          (state.roleComposition is null during LOBBY, see GameEngine's own
+          doc comment) through the rest of the game, not just at that one
+          moment, so a player who missed the announcement can check anytime. */}
+      {!endStats && state.roleComposition && <RoleCompositionButton composition={state.roleComposition} />}
 
       {endStats ? (
         <EndGamePanel

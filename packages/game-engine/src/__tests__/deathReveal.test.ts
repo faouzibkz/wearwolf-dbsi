@@ -42,7 +42,13 @@ describe("public death reveal (name + role, never the mechanism)", () => {
 
     const livingWolf = publicState.players.find((p) => p.id === ids[wolf]);
     expect(livingWolf!.revealedRoleId).toBeUndefined();
-    expect(JSON.stringify(publicState)).not.toContain("LOUP_GAROU");
+    // roleComposition (added for the "which roles are in this game" feature)
+    // is a deliberate, documented exception to "no role string anywhere in
+    // public state" — it's a tally (how many LOUP_GAROU exist in the game),
+    // never tied to which specific player holds one, so it's excluded here;
+    // the real invariant (no INDIVIDUAL living player's role leaks) is
+    // already covered above via livingWolf!.revealedRoleId.
+    expect(JSON.stringify({ ...publicState, roleComposition: undefined })).not.toContain("LOUP_GAROU");
 
     // The mechanism stays hidden: no cause/attacker info anywhere in the public payload.
     const json = JSON.stringify(publicState);

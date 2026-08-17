@@ -251,6 +251,23 @@ export class GameEngine {
     return this.ctx().getPlayer(playerId).roleId;
   }
 
+  /**
+   * Tally of how many players currently hold each role, straight from the
+   * real post-`startGame()` assignment — unlike `state.config.roleCounts`,
+   * this always includes the auto-filled VILLAGEOIS remainder and reflects
+   * reality even if a role is ever reassigned mid-game in the future (the
+   * Loup Vert's steal doesn't change `roleId` today, but this stays correct
+   * regardless). Safe to call anytime; only meaningful — and only ever
+   * actually read via `getPublicState` — once `startGame()` has run.
+   */
+  getRoleComposition(): Partial<Record<RoleId, number>> {
+    const tally: Partial<Record<RoleId, number>> = {};
+    for (const player of this.state.players.values()) {
+      tally[player.roleId] = (tally[player.roleId] ?? 0) + 1;
+    }
+    return tally;
+  }
+
   // -------------------------------------------------------------------
   // Chef du village election
   // -------------------------------------------------------------------
@@ -1349,6 +1366,7 @@ export class GameEngine {
       tieDefenseOrder: this.state.tieDefense?.order ?? null,
       tieDefenseCurrentSpeakerId: TieDefense.currentTieDefenseSpeakerId(this.ctx()),
       soundEffectsEnabled: this.state.config.soundEffectsEnabled,
+      roleComposition: this.state.phase === "LOBBY" ? null : this.getRoleComposition(),
     };
   }
 

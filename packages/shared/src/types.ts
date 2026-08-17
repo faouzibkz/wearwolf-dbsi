@@ -520,6 +520,21 @@ export interface GameStatePublic {
   secondDebateSlots: number;
   /** Mirrors GameConfig.soundEffectsEnabled — the single source of truth every client checks before playing any cue. */
   soundEffectsEnabled: boolean;
+  /**
+   * The full role roster actually in play this game — every role tallied
+   * from the REAL post-assignment `players`, not echoed back from
+   * `GameConfig.roleCounts` (which never includes the VILLAGEOIS remainder
+   * GameEngine.startGame() auto-fills — see its own doc comment). `null`
+   * during LOBBY, before `startGame()` has run and every player still holds
+   * the pre-assignment placeholder role — showing a roster then would just
+   * be "everyone is VILLAGEOIS", which is meaningless, not informative.
+   * Composition (which roles + how many) is intentionally NOT secret in
+   * this game the way an individual's own role is — it's exactly what an
+   * in-person Loup-Garou moderator normally announces out loud before play
+   * starts; this just makes sure every player still has it in writing,
+   * available the whole game, even if they missed the announcement.
+   */
+  roleComposition: Partial<Record<RoleId, number>> | null;
 }
 
 export interface EndGameStats {
