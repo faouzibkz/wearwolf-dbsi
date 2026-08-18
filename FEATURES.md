@@ -432,6 +432,28 @@ git checkout 767385b   # état juste avant ce lot
 
 ---
 
+## 23. Bandeau visible « connexion perdue » sur chaque action (18 août 2026) — ✅ Fait
+
+**Retour d'un vrai test à 4 joueurs** (via téléphone + laptop, comptes de test) : en tant que Mowgli, sélection d'un joueur possible, mais « Confirmer » ne faisait rien pendant ~15 secondes, aucune erreur visible, puis ça finissait par marcher. Même chose pour le loup avec un timer plus long. La Voyante, elle, marchait instantanément.
+
+**Cause racine identifiée** en comparant avec la version de `NightPromptPanel.tsx` d'avant le correctif §19 (`git diff 6559c64 575298d`) : l'ANCIENNE version appelait `onSubmit()` sans l'attendre et affichait « Action envoyée » immédiatement, quel que soit le résultat réel côté serveur — elle mentait aussi facilement sur un succès qu'elle aurait pu mentir sur un échec. Le correctif §19/§21 a rendu ça honnête (succès affiché seulement après un vrai accusé de réception), ce qui est strictement plus correct, mais ça veut dire qu'un vrai accroc de connexion se traduit maintenant par un bouton bloqué en « envoi… » plus un petit texte d'erreur — facile à rater sur téléphone, surtout en ayant déjà changé d'onglet (confirmé dans les logs nginx : le téléphone testé rouvrait une connexion WebSocket toutes les quelques minutes, cohérent avec iOS qui suspend un onglet en arrière-plan).
+
+**Corrigé** :
+- Nouvel état `socketConnected` dans `play/[code]/page.tsx` (`socket.on("connect"/"disconnect")`), transmis en `isConnected` à tous les panneaux d'action : `NightPromptPanel` (prompt principal + pouvoir emprunté du Loup Vert), `LiveVoteList` (vote Chef + vote du jour), `LoupVertGuessPanel`, `BarbiePowerPanel`.
+- Déconnecté → tous les boutons d'action désactivés + bandeau clair (« 🔌 Connexion perdue — reconnexion en cours… ») au lieu de laisser cliquer dans le vide.
+- Message d'erreur de `NightPromptPanel` remonté d'un petit texte gris à un encadré coloré, plus visible.
+- Ne corrige PAS le réseau lui-même (la suspension d'un onglet en arrière-plan sur iOS est un comportement de la plateforme, pas quelque chose qu'un serveur/proxy peut empêcher) — rend juste l'échec existant (correct, honnête) compréhensible au lieu de ressembler à un bouton cassé.
+
+**Commit** : `c24bde4` — **Tag de rollback** : `feature-connection-status-banner`.
+
+```bash
+git checkout c24bde4~1   # état juste avant ce lot
+```
+
+**Vérifications effectuées** : suite complète 360/360 (aucun changement côté engine/server, uniquement l'UI web). Le typecheck TypeScript de `apps/web` n'est pas utilisable dans ce bac à sable (`@types/node`/`@types/react` présents mais vides — limitation d'environnement préexistante, pas causée par ce lot) ; vérifié à la place par relecture manuelle complète de chaque fichier modifié, changements mécaniques et à faible risque (ajout de prop + conditions `disabled`, rien d'autre).
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
