@@ -1,6 +1,9 @@
 ############################################################################
-# Stops the app cleanly: turns off both Tailscale Funnels first (so nobody
-# can reach the app while it's shutting down), then stops the containers.
+# Stops the app cleanly: turns off Tailscale Funnel first (so nobody can
+# reach the app while it's shutting down), then stops the containers.
+# `funnel reset` clears everything regardless of how many ports are
+# funneled, so this didn't need to change with the 18 août 2026 move to a
+# single port (see start-app.ps1 / TAILSCALE_SETUP.md).
 ############################################################################
 
 Set-Location $PSScriptRoot
