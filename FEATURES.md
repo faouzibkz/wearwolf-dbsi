@@ -408,6 +408,30 @@ git checkout d2ef138   # état juste avant ce lot
 
 ---
 
+## 22. Proxy à port unique pour Tailscale Funnel (18 août 2026) — ✅ Fait
+
+**Retour utilisateur** : depuis les lots §18-§21, certains joueurs n'arrivaient parfois pas à se connecter en wifi, mais réussissaient en passant sur les données mobiles — sans lien évident avec les nouvelles fonctionnalités (notes, roster des rôles) qui, une fois vérifiées, n'y sont pour rien (le roster est 100% côté client sans réseau ; les notes ne font qu'un petit appel socket toutes les 800ms).
+
+**Cause racine identifiée** : le serveur (Socket.IO + API REST) était exposé sur son propre port Tailscale Funnel séparé (`:8443`, Funnel n'autorisant que 443/8443/10000, et 443 étant déjà pris par l'app web). Beaucoup de réseaux wifi (invités, hôtels, bureaux, certaines box grand public) bloquent le trafic sortant sur des ports non standards comme 8443 tout en laissant passer le 443 — les données mobiles, elles, ne bloquent quasiment jamais rien. Ça correspond exactement au symptôme : la page se charge (port 443, web), mais la connexion de jeu (port 8443, serveur) ne s'établit jamais sur certains wifi.
+
+**Corrigé** :
+- Nouveau service `proxy` (nginx, `proxy/nginx.conf`) dans `docker-compose.yml`, unique point d'entrée public : route `/socket.io` et `/api` vers le serveur, tout le reste vers l'app web — un seul port (3000) au lieu de deux.
+- `web`/`server` déplacés sur les ports hôte 3001/4001, pour du débogage direct uniquement (plus jamais exposés publiquement).
+- `NEXT_PUBLIC_SERVER_URL` devient la MÊME origine que la page (plus de `:8443` nulle part).
+- `TAILSCALE_SETUP.md` réécrit : une seule commande `tailscale funnel` au lieu de deux.
+- **Bug de test trouvé et corrigé en marge** (sans rapport avec le proxy, découvert en relançant la suite complète par précaution) : `idleCleanup.test.ts` avait un vrai bug de mock — un second `vi.spyOn(Date, "now")` appelé juste pour faire `.mockRestore()` dessus, qui ne restaure pas la vraie horloge mais fige `Date.now()` sur la valeur mockée pour le reste du test. Le test « une partie touchée survit après réinitialisation de son horloge d'inactivité » passait par chance, pas parce que le comportement était correctement vérifié. Corrigé en gardant la référence du spy et en restaurant cette instance précise.
+
+**Commit** : `a00e666` — **Tag de rollback** : `feature-single-port-proxy`.
+
+```bash
+git checkout 767385b   # état juste avant ce lot
+# ou : git reset --hard 767385b
+```
+
+**Vérifications effectuées** : suite complète 360/360 (game-engine 187, rating 37, server 136, en comptant la correction du test idleCleanup). Syntaxe de `nginx.conf` validée (parsée sans erreur une fois enveloppée dans le contexte `http {}` qu'utilise l'image `nginx:alpine`) et `docker-compose.yml` validé comme YAML correctement structuré. **Aucun test live avec Docker/Tailscale** — l'environnement d'exécution de Claude n'a ni Docker ni les droits root pour installer nginx, donc le comportement réel du proxy (bascule wifi/données mobiles en particulier) reste à confirmer à la prochaine vraie soirée de jeu, comme pour les lots précédents.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
