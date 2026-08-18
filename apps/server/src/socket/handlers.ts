@@ -50,6 +50,7 @@ import { safeAck, type Ack, type SocketData } from "./types.js";
 import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
 import { pushAllPrompts } from "./sync.js";
 import { logAction } from "../logging/actionLog.js";
+import { wrapForIdempotency } from "./idempotency.js";
 
 /**
  * Called after every state-mutating action, no matter which one. Centralizing
@@ -218,6 +219,23 @@ export function registerSocketHandlers(io: Server): void {
       next();
     });
 
+    // 18 août 2026 (FEATURES.md §25) — every socket.on(SOCKET_EVENTS...., ...)
+    // registration below goes through this `on` wrapper instead of calling
+    // socket.on directly, so every one of them gets automatic
+    // retry-safety for free: if the client resends the same action
+    // (same __rid) because its first ack got lost or timed out — see
+    // apps/web/src/lib/socket.ts's emitWithAck — the handler's real logic
+    // (and any side effect it has, like the Voyante's private "you saw X"
+    // message or advancing the day-vote turn queue) runs at most once, and
+    // the retry just replays the original response. Requests without a
+    // __rid (there shouldn't be any left, but this is deliberately
+    // permissive) behave exactly as before. See idempotency.ts for the
+    // caching itself — kept as its own module so it has its own tests
+    // independent of this 900-line file.
+    const on = (event: string, handler: (payload: any, ack: Ack) => void): void => {
+      socket.on(event, wrapForIdempotency(() => socket.data.playerId ?? socket.id, event, handler) as any);
+    };
+
     // Game-independent clock sync: lets the client measure (and correct
     // for) drift between its own clock and this server's, so every
     // countdown it renders can be anchored to the SERVER's notion of "now"
@@ -225,7 +243,7 @@ export function registerSocketHandlers(io: Server): void {
     // apps/web/src/lib/serverClock.ts for the client-side round-trip math
     // that consumes this. No game/auth context needed at all, so it's
     // registered here rather than further down with the game handlers.
-    socket.on(SOCKET_EVENTS.TIME_SYNC, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.TIME_SYNC, (_payload: unknown, ack: Ack) => {
       safeAck(() => ({ serverNow: Date.now() }), ack);
     });
 
@@ -235,7 +253,7 @@ export function registerSocketHandlers(io: Server): void {
     // only succeeds if hostToken matches the one issued when it was
     // created (see gameRegistry.create) — that's what actually protects
     // an in-progress game's admin view now that there's no typed secret.
-    socket.on(SOCKET_EVENTS.ADMIN_AUTH, (payload: AdminAuthPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_AUTH, (payload: AdminAuthPayload, ack: Ack) => {
       safeAck(() => {
         let engine: import("@loupgarou/game-engine").GameEngine;
         let hostToken: string;
@@ -264,7 +282,7 @@ export function registerSocketHandlers(io: Server): void {
     // For an already-authenticated host to spin up an additional game from
     // the same browser session (e.g. running two tables at once) without
     // losing their first game's admin connection.
-    socket.on(SOCKET_EVENTS.ADMIN_CREATE_GAME, (payload: AdminCreateGamePayload, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_CREATE_GAME, (payload: AdminCreateGamePayload, ack: Ack) => {
       safeAck(() => {
         requireAdmin(socket);
         const { engine, hostToken } = gameRegistry.create(payload.config);
@@ -276,7 +294,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.PLAYER_JOIN, (payload: PlayerJoinPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.PLAYER_JOIN, (payload: PlayerJoinPayload, ack: Ack) => {
       safeAck(() => {
         // Every player must be logged into a permanent account (spec
         // section 1) — the account is the identity stats/history/rating
@@ -324,7 +342,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.PLAYER_RECONNECT, (payload: PlayerReconnectPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.PLAYER_RECONNECT, (payload: PlayerReconnectPayload, ack: Ack) => {
       safeAck(() => {
         const engine = gameRegistry.requireGame(payload.gameCode);
         const player = engine.getPlayers().find((p) => p.id === payload.playerId);
@@ -363,7 +381,7 @@ export function registerSocketHandlers(io: Server): void {
     // they're allowed to do this, same validation ADMIN_AUTH resumption
     // uses, since this socket was never registered as this game's admin
     // socket. See socket/replay.ts for the actual roster-carrying logic.
-    socket.on(SOCKET_EVENTS.REPLAY_REQUEST, (payload: ReplayRequestPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.REPLAY_REQUEST, (payload: ReplayRequestPayload, ack: Ack) => {
       safeAck(() => {
         const oldEngine = gameRegistry.requireGame(payload.gameCode);
         if (!gameRegistry.isValidHostToken(payload.gameCode, payload.hostToken)) {
@@ -428,7 +446,7 @@ export function registerSocketHandlers(io: Server): void {
     // Admin game-lifecycle actions
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.ADMIN_UPDATE_CONFIG, (payload: AdminUpdateConfigPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_UPDATE_CONFIG, (payload: AdminUpdateConfigPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.updateConfig(payload.config);
@@ -438,7 +456,7 @@ export function registerSocketHandlers(io: Server): void {
 
     // Deliberately separate from ADMIN_UPDATE_CONFIG: sound is cosmetic and
     // togglable anytime, including mid-game, unlike role counts/timers/etc.
-    socket.on(SOCKET_EVENTS.ADMIN_SET_SOUND_EFFECTS, (payload: AdminSetSoundEffectsPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_SET_SOUND_EFFECTS, (payload: AdminSetSoundEffectsPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.setSoundEffectsEnabled(payload.enabled);
@@ -446,7 +464,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_START_GAME, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_START_GAME, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         const result = engine.startGame();
@@ -456,7 +474,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_PAUSE, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_PAUSE, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.pause();
@@ -465,7 +483,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_RESUME, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_RESUME, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.resume();
@@ -473,7 +491,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_FORCE_NEXT_PHASE, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_FORCE_NEXT_PHASE, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         runForceNextPhase(io, engine);
@@ -485,7 +503,7 @@ export function registerSocketHandlers(io: Server): void {
     // village — checked live against chefId at click time, so the power
     // correctly transfers to a successor after a Chef-succession and is
     // revoked the instant the Chef dies, with no separate bookkeeping.
-    socket.on(SOCKET_EVENTS.CHEF_FORCE_NEXT_PHASE, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_FORCE_NEXT_PHASE, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireChefGame(socket);
         runForceNextPhase(io, engine);
@@ -497,7 +515,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_UNDO_PHASE, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_UNDO_PHASE, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         const undone = engine.undoPhase();
@@ -506,7 +524,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_END_GAME, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_END_GAME, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.endGame();
@@ -514,7 +532,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_REVEAL_ROLES, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_REVEAL_ROLES, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.revealRolesEarly();
@@ -522,7 +540,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_FORCE_START_CHEF_ELECTION, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_FORCE_START_CHEF_ELECTION, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.forceStartChefDebate();
@@ -530,7 +548,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_KILL_PLAYER, (payload: AdminKillPlayerPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_KILL_PLAYER, (payload: AdminKillPlayerPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.adminKillPlayer(payload.playerId);
@@ -538,14 +556,14 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_SAVE_PRESET, (payload: { name: string; config: unknown }, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_SAVE_PRESET, (payload: { name: string; config: unknown }, ack: Ack) => {
       safeAck(async () => {
         requireAdmin(socket);
         await savePreset(payload.name, payload.config as object);
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.ADMIN_LIST_PRESETS, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_LIST_PRESETS, (_payload: unknown, ack: Ack) => {
       safeAck(async () => {
         requireAdmin(socket);
         return listPresets();
@@ -556,7 +574,7 @@ export function registerSocketHandlers(io: Server): void {
     // Chef du village election
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.CHEF_VOLUNTEER, (payload: ChefVolunteerPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_VOLUNTEER, (payload: ChefVolunteerPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         engine.volunteerForChef(payload.playerId ?? socket.data.playerId!);
@@ -564,7 +582,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.CHEF_DEBATE_NEXT_SPEAKER, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_DEBATE_NEXT_SPEAKER, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         engine.advanceChefSpeaker();
@@ -574,7 +592,7 @@ export function registerSocketHandlers(io: Server): void {
 
     // Self-serve "passe la parole" for the chef debate — same pattern as
     // DAY_DISCUSSION_PASS_TURN / TIE_DEFENSE_PASS_TURN below.
-    socket.on(SOCKET_EVENTS.CHEF_DEBATE_PASS_TURN, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_DEBATE_PASS_TURN, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const currentSpeakerId = engine.getCurrentChefDebateSpeakerId();
@@ -590,7 +608,7 @@ export function registerSocketHandlers(io: Server): void {
     // Day discussion — self-serve "passe la parole"
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.DAY_DISCUSSION_PASS_TURN, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.DAY_DISCUSSION_PASS_TURN, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const currentSpeakerId = engine.getCurrentDaySpeakerId();
@@ -606,7 +624,7 @@ export function registerSocketHandlers(io: Server): void {
     // Barbie — one-shot mid-day-discussion reveal
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.BARBIE_REVEAL_SUBMIT, (payload: BarbieRevealSubmitPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.BARBIE_REVEAL_SUBMIT, (payload: BarbieRevealSubmitPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const barbieId = payload.playerId ?? socket.data.playerId!;
@@ -643,7 +661,7 @@ export function registerSocketHandlers(io: Server): void {
     // GameEngine.triggerAlienNightfall's doc comment for why this must
     // never be attributed to anyone, on-screen or in any log a player can
     // see.
-    socket.on(SOCKET_EVENTS.ALIEN_FORCE_NIGHTFALL, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ALIEN_FORCE_NIGHTFALL, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const alienId = socket.data.playerId!;
@@ -656,7 +674,7 @@ export function registerSocketHandlers(io: Server): void {
     // Chef's second debate (CHEF_SECOND_DEBATE) — optional bonus turns
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.CHEF_SECOND_DEBATE_CHOOSE, (payload: ChefSecondDebateChoosePayload, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_SECOND_DEBATE_CHOOSE, (payload: ChefSecondDebateChoosePayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const state = engine.getPublicState();
@@ -669,7 +687,7 @@ export function registerSocketHandlers(io: Server): void {
     });
 
     // Self-serve "passe la parole" for a bonus speaker's own turn, same pattern as DAY_DISCUSSION_PASS_TURN.
-    socket.on(SOCKET_EVENTS.CHEF_SECOND_DEBATE_PASS_TURN, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_SECOND_DEBATE_PASS_TURN, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const currentSpeakerId = engine.getCurrentSecondDebateSpeakerId();
@@ -685,7 +703,7 @@ export function registerSocketHandlers(io: Server): void {
     // Tie defense — self-serve "passe la parole" (same pattern as day discussion)
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.TIE_DEFENSE_PASS_TURN, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.TIE_DEFENSE_PASS_TURN, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const currentSpeakerId = engine.getCurrentTieDefenseSpeakerId();
@@ -697,7 +715,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.CHEF_VOTE_CAST, (payload: ChefVoteCastPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_VOTE_CAST, (payload: ChefVoteCastPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         engine.castChefVote(payload.voterId ?? socket.data.playerId!, payload.candidateId);
@@ -717,7 +735,7 @@ export function registerSocketHandlers(io: Server): void {
     });
 
     // The admin (or an autoprogress timer) is the one that actually tallies.
-    socket.on(SOCKET_EVENTS.CHEF_ELECTED, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_ELECTED, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         const electedId = engine.tallyChefVoteAndProceed();
@@ -730,7 +748,7 @@ export function registerSocketHandlers(io: Server): void {
     // Day discussion / vote
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.DAY_VOTE_CAST, (payload: DayVoteCastPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.DAY_VOTE_CAST, (payload: DayVoteCastPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         // castDayVote() itself enforces turn order (throws if it isn't this
@@ -747,7 +765,7 @@ export function registerSocketHandlers(io: Server): void {
     // Night actions
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.NIGHT_ACTION_SUBMIT, (payload: NightActionSubmitPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.NIGHT_ACTION_SUBMIT, (payload: NightActionSubmitPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
@@ -801,7 +819,7 @@ export function registerSocketHandlers(io: Server): void {
     // Loup Vert's two extra, independent night actions — see
     // packages/shared/src/events.ts's LOUP_VERT_* comments for why these
     // live on their own channel instead of NIGHT_ACTION_SUBMIT.
-    socket.on(SOCKET_EVENTS.LOUP_VERT_GUESS_SUBMIT, (payload: LoupVertGuessSubmitPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.LOUP_VERT_GUESS_SUBMIT, (payload: LoupVertGuessSubmitPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const loupVertId = payload.playerId ?? socket.data.playerId!;
@@ -857,7 +875,7 @@ export function registerSocketHandlers(io: Server): void {
       },
     );
 
-    socket.on(SOCKET_EVENTS.CHASSEUR_SHOOT, (payload: ChasseurShootPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.CHASSEUR_SHOOT, (payload: ChasseurShootPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const shooterId = payload.playerId ?? socket.data.playerId!;
@@ -871,7 +889,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.CHEF_SUCCESSION_CHOOSE, (payload: ChefSuccessionChoosePayload, ack: Ack) => {
+    on(SOCKET_EVENTS.CHEF_SUCCESSION_CHOOSE, (payload: ChefSuccessionChoosePayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const deadChefId = socket.data.playerId!;
@@ -889,7 +907,7 @@ export function registerSocketHandlers(io: Server): void {
     // Wolf private chat
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.WOLF_CHAT_SEND, (payload: WolfChatSendPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.WOLF_CHAT_SEND, (payload: WolfChatSendPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
@@ -903,7 +921,7 @@ export function registerSocketHandlers(io: Server): void {
     // WolfTargetPreviewPayload's doc comment. Silently ignored outside
     // NIGHT (a stray click after the night already resolved) rather than
     // throwing — this is a pure UI courtesy, never worth an error toast.
-    socket.on(SOCKET_EVENTS.WOLF_TARGET_PREVIEW, (payload: WolfTargetPreviewPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.WOLF_TARGET_PREVIEW, (payload: WolfTargetPreviewPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = socket.data.playerId!;
@@ -925,7 +943,7 @@ export function registerSocketHandlers(io: Server): void {
     // GameEngine.getAfterlifeMemberIds), so a living player who somehow
     // fires this event gets rejected there rather than needing a second
     // check duplicated here.
-    socket.on(SOCKET_EVENTS.AFTERLIFE_CHAT_SEND, (payload: AfterlifeChatSendPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.AFTERLIFE_CHAT_SEND, (payload: AfterlifeChatSendPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = payload.playerId ?? socket.data.playerId!;
@@ -938,7 +956,7 @@ export function registerSocketHandlers(io: Server): void {
     // above, the moment GAME_ENDED fires.
     // -----------------------------------------------------------------
 
-    socket.on(SOCKET_EVENTS.MVP_VOTE_CAST, (payload: MvpVoteCastPayload, ack: Ack) => {
+    on(SOCKET_EVENTS.MVP_VOTE_CAST, (payload: MvpVoteCastPayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const voterId = socket.data.playerId;
@@ -957,7 +975,7 @@ export function registerSocketHandlers(io: Server): void {
     // Safety valve for a straggler who never comes back to vote — same
     // idea as ADMIN_FORCE_NEXT_PHASE, since this vote otherwise has no
     // fixed deadline by design.
-    socket.on(SOCKET_EVENTS.ADMIN_FORCE_MVP_FINALIZE, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.ADMIN_FORCE_MVP_FINALIZE, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireAdminGame(socket);
         finalizeMvpVoting(io, engine);
@@ -971,7 +989,7 @@ export function registerSocketHandlers(io: Server): void {
     // Fetched once when a player's notes panel first opens (or right after
     // a reconnect) — never pushed proactively, since nothing but the
     // player's own future NOTES_SAVE ever changes it.
-    socket.on(SOCKET_EVENTS.NOTES_GET, (_payload: unknown, ack: Ack) => {
+    on(SOCKET_EVENTS.NOTES_GET, (_payload: unknown, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = socket.data.playerId;
@@ -981,7 +999,7 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on(SOCKET_EVENTS.NOTES_SAVE, (payload: NotesStatePayload, ack: Ack) => {
+    on(SOCKET_EVENTS.NOTES_SAVE, (payload: NotesStatePayload, ack: Ack) => {
       safeAck(() => {
         const engine = requireGameFor(socket);
         const playerId = socket.data.playerId;

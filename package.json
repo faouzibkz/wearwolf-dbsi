@@ -13,7 +13,7 @@
     "dev:web": "npm run dev --workspace=apps/web",
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/game-engine && npm run build --workspace=packages/rating && npm run build --workspace=apps/server && npm run build --workspace=apps/web",
     "build:packages": "npm run build --workspace=packages/shared && npm run build --workspace=packages/game-engine && npm run build --workspace=packages/rating",
-    "test": "npm run test --workspace=packages/game-engine && npm run test --workspace=packages/rating && npm run test --workspace=apps/server",
+    "test": "npm run test --workspace=packages/game-engine && npm run test --workspace=packages/rating && npm run test --workspace=apps/server && npm run test --workspace=apps/web",
     "test:watch": "npm run test:watch --workspace=packages/game-engine",
     "lint": "npm run lint --workspaces --if-present",
     "prisma:generate": "npm run prisma:generate --workspace=apps/server",

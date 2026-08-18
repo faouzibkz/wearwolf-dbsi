@@ -471,6 +471,25 @@ git checkout c24bde4~1   # état juste avant ce lot
 
 ---
 
+## 25. Retry automatique + idempotence sur toutes les actions confirmables (18 août 2026) — ✅ Fait
+
+**Demande explicite de l'utilisateur**, juste après le lot §24 : « le joueur confirme sa cible pour tuer/protéger etc, et si ça échoue il ne doit rien remarquer, mais le serveur doit réessayer automatiquement — et bien sûr l'idempotence est la clé ». C'est le prolongement direct du §23 : le bandeau de connexion rend l'échec honnête et visible, mais le joueur doit quand même remarquer et re-cliquer. Ici, l'objectif est qu'un simple accroc réseau de quelques secondes (le cas réel documenté au §23 — un téléphone qui change d'onglet) se corrige tout seul, sans jamais que l'action ne s'applique deux fois.
+
+**Client** (`apps/web/src/lib/retryPolicy.ts`, nouveau + `apps/web/src/lib/socket.ts`, réécrit) :
+- Chaque appel à `emitWithAck` (le point de passage unique pour TOUTES les actions confirmables — nuit, votes, tir du Chasseur, révélation Barbie, etc., une quarantaine d'événements en tout) génère maintenant un identifiant de requête (`__rid`, `crypto.randomUUID()`) une seule fois, réutilisé pour chaque tentative de ce même appel logique.
+- Si l'accusé de réception (ack) expire (transport uniquement — jamais un vrai refus du serveur du genre « ce n'est pas votre tour », qui remonte immédiatement comme avant), le client réessaie automatiquement jusqu'à 2 fois de plus (3 tentatives au total), en attendant la reconnexion du socket si besoin plutôt que de retenter dans le vide.
+- Aucun des ~15 sites d'appel (`page.tsx`, `NightPromptPanel`, etc.) n'a eu besoin d'être modifié — toute la logique vit dans ce point de passage unique.
+
+**Serveur** (`apps/server/src/socket/idempotency.ts`, nouveau + `handlers.ts`) :
+- Chaque enregistrement `socket.on(SOCKET_EVENTS...)` (43 au total, tout sauf `disconnect`) passe maintenant par un petit adaptateur `on(...)` qui met en cache la réponse pour chaque `(joueur, événement, __rid)`. Une tentative répétée retrouve exactement la même réponse sans jamais ré-exécuter le handler — donc sans jamais réappliquer l'action (déterminant pourquoi c'était nécessaire : `NIGHT_ACTION_SUBMIT` envoie un message privé « vous avez vu X » à la Voyante à chaque exécution, `DAY_VOTE_CAST` fait avancer une file d'attente stricte de tour en tour — exécuter ça deux fois pour un seul clic aurait été un vrai bug, pas juste une inefficacité).
+- Générique et centralisé plutôt qu'audité action par action, exprès : un événement non audité qui se met à s'appliquer deux fois sur un retry plus tard aurait été bien pire que ce filet de sécurité uniforme.
+
+**Tests** : 10 nouveaux tests serveur (`idempotency.test.ts`) + 12 nouveaux tests client (`retryPolicy.test.ts`, `socket.test.ts` — première suite de tests jamais ajoutée à `apps/web`, avec son propre script `npm test`). Suite complète du monorepo : 152 (serveur) + 187 (moteur de jeu) + 37 (rating) + 12 (web) = **388 tests, tous verts**, aucune régression.
+
+**Vérifications** : `tsc --noEmit` propre sur tous les fichiers touchés (serveur et web), seules les erreurs déjà documentées et sans rapport (`@prisma/client`, résolution `next/navigation` dans ce sandbox) subsistent.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :

@@ -1,6 +1,7 @@
 "use client";
 
 import { io, type Socket } from "socket.io-client";
+import { MAX_ATTEMPTS, TransportError, delayForRetry, generateRequestId } from "./retryPolicy";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:4000";
 
@@ -37,17 +38,93 @@ export type AckResponse<T = unknown> = { ok: true; data?: T } | { ok: false; err
  */
 const ACK_TIMEOUT_MS = 10_000;
 
-export function emitWithAck<T = unknown>(event: string, payload: unknown): Promise<T> {
-  return new Promise((resolve, reject) => {
-    getSocket()
-      .timeout(ACK_TIMEOUT_MS)
-      .emit(event, payload, (err: Error | null, res?: AckResponse<T>) => {
-        if (err) {
-          reject(new Error("Le serveur ne répond pas — vérifiez votre connexion et réessayez."));
-          return;
-        }
-        if (res?.ok) resolve(res.data as T);
-        else reject(new Error(res?.error ?? "Erreur inconnue."));
-      });
+/**
+ * Minimal shape emitWithAckOn actually needs from a socket, so tests can
+ * pass a small fake instead of a real socket.io-client connection — see
+ * socket.test.ts.
+ */
+export interface AckCapableSocket {
+  connected: boolean;
+  timeout(ms: number): { emit(event: string, payload: unknown, cb: (err: Error | null, res?: AckResponse) => void): void };
+  once(event: "connect", cb: () => void): void;
+  off(event: "connect", cb: () => void): void;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Resolves after `ms`, or as soon as the socket reconnects — whichever comes first. Never rejects: giving up on waiting just means the next attempt's own ACK_TIMEOUT_MS does the rejecting instead. */
+function waitBeforeRetry(sock: AckCapableSocket, ms: number): Promise<void> {
+  if (sock.connected) return sleep(ms);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      sock.off("connect", onConnect);
+      resolve();
+    }, ms);
+    function onConnect(): void {
+      clearTimeout(timer);
+      resolve();
+    }
+    sock.once("connect", onConnect);
   });
+}
+
+function attemptOnce<T>(sock: AckCapableSocket, event: string, payload: unknown): Promise<T> {
+  return new Promise((resolve, reject) => {
+    sock.timeout(ACK_TIMEOUT_MS).emit(event, payload, (err, res) => {
+      if (err) {
+        reject(new TransportError());
+        return;
+      }
+      if (res?.ok) resolve(res.data as T);
+      // An application-level rejection (server understood the request and
+      // said no) is a normal Error, NOT a TransportError — the retry loop
+      // below must never retry this branch.
+      else reject(new Error(res?.error ?? "Erreur inconnue."));
+    });
+  });
+}
+
+/**
+ * 18 août 2026 (FEATURES.md §25) — "he'll confirm his target to kill /
+ * protect... and if that fails he will not notice but the server will
+ * retry automatically" — this is that retry. Every payload gets a __rid
+ * (request id), generated once and reused across every attempt of the
+ * SAME logical call, so a retry the server actually received the first
+ * time around (its ack just got lost) replays the original result instead
+ * of re-applying the action — see apps/server/src/socket/idempotency.ts.
+ *
+ * Only TransportError (ack timeout / no ack at all) triggers a retry.
+ * A real application-level rejection surfaces immediately, unchanged from
+ * before — retrying "ce n'est pas votre tour" can't fix it.
+ *
+ * Exported separately from emitWithAck (which just calls this with the
+ * real getSocket()) so tests can drive the retry loop against a small fake
+ * socket instead of a live socket.io connection.
+ */
+export async function emitWithAckOn<T = unknown>(sock: AckCapableSocket, event: string, payload: unknown): Promise<T> {
+  const taggedPayload = payload && typeof payload === "object" ? { ...payload, __rid: generateRequestId() } : payload;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await waitBeforeRetry(sock, delayForRetry(attempt - 1));
+    }
+    try {
+      return await attemptOnce<T>(sock, event, taggedPayload);
+    } catch (err) {
+      const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+      if (!(err instanceof TransportError) || isLastAttempt) {
+        throw err;
+      }
+      // else: transport failure, attempts remain — loop around and retry.
+    }
+  }
+  // Unreachable (the loop above always returns or throws), but keeps
+  // TypeScript happy about every code path returning a value.
+  throw new TransportError();
+}
+
+export function emitWithAck<T = unknown>(event: string, payload: unknown): Promise<T> {
+  return emitWithAckOn<T>(getSocket(), event, payload);
 }

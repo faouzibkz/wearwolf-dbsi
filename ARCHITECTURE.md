@@ -146,6 +146,8 @@ Chaque action mutante (vote, action de nuit, etc.) passe par `sync(io, engine)` 
 
 `PLAYER_JOIN` exige désormais un cookie de session valide (lu depuis `socket.handshake.headers.cookie` — le cookie voyage automatiquement avec la connexion Socket.IO grâce à `withCredentials: true` côté client et `cors({ credentials: true })` côté serveur). Sans session : rejet explicite, pas de "joueur fantôme" non rattaché à un compte. `PLAYER_RECONNECT` réaffirme ce lien de façon best-effort (ne bloque jamais une reconnexion si le cookie a expiré).
 
+**18 août 2026 (§25) — retry-safety générique.** Chaque `socket.on(SOCKET_EVENTS...)` de ce fichier passe par un petit adaptateur local `on(...)` (juste après le middleware de logs, avant tout enregistrement de handler) qui enveloppe le handler avec `wrapForIdempotency()` (`socket/idempotency.ts`). Si le payload porte un `__rid` déjà vu pour ce joueur+événement (généré côté client par `emitWithAck`, réutilisé à chaque nouvelle tentative d'un même appel), la réponse mise en cache est rejouée et le handler réel — donc tout effet de bord qu'il contient — ne s'exécute jamais deux fois. Volontairement générique plutôt qu'audité événement par événement : voir le commentaire en tête de `idempotency.ts` pour le raisonnement complet.
+
 ### 4.3 Persistance (`db/persistence.ts`, `db/prisma.ts`, Prisma/Postgres)
 
 Trois responsabilités, toutes **best-effort** (une panne DB ne doit jamais planter ou geler une partie en cours) :
