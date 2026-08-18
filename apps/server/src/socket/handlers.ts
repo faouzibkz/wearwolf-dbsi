@@ -49,6 +49,7 @@ import { forceNextPhase } from "./forceNextPhase.js";
 import { safeAck, type Ack, type SocketData } from "./types.js";
 import { schedulePhaseTimer, clearPhaseTimer } from "./timers.js";
 import { pushAllPrompts } from "./sync.js";
+import { logAction } from "../logging/actionLog.js";
 
 /**
  * Called after every state-mutating action, no matter which one. Centralizing
@@ -193,6 +194,29 @@ function runForceNextPhase(io: Server, engine: import("@loupgarou/game-engine").
 export function registerSocketHandlers(io: Server): void {
   io.on("connection", (socket: Socket<any, any, any, SocketData>) => {
     socket.data.isAdmin = false;
+    logAction({ event: "connect", socketId: socket.id });
+
+    // 18 août 2026 (FEATURES.md §23/§24) — logs EVERY incoming socket event
+    // this connection sends, before its handler runs: what arrived, when,
+    // and for whom. This is the persistent trail that was missing when
+    // diagnosing "Confirmer does nothing" — the only evidence available at
+    // the time was nginx's HTTP access log, which can't see individual
+    // socket messages at all. gameCode/playerId are read fresh off
+    // socket.data on every event (not captured once here) since they get
+    // populated partway through this connection's life (ADMIN_AUTH/
+    // PLAYER_JOIN/PLAYER_RECONNECT), not before it.
+    socket.use((packet, next) => {
+      const [event, payload] = packet;
+      logAction({
+        event,
+        socketId: socket.id,
+        gameCode: socket.data.gameCode,
+        playerId: socket.data.playerId,
+        isAdmin: socket.data.isAdmin,
+        payload,
+      });
+      next();
+    });
 
     // Game-independent clock sync: lets the client measure (and correct
     // for) drift between its own clock and this server's, so every
@@ -376,8 +400,15 @@ export function registerSocketHandlers(io: Server): void {
       }, ack);
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
       const { gameCode, playerId } = socket.data;
+      // Socket.IO's own disconnect reason ("transport close", "ping
+      // timeout", "client namespace disconnect", "transport error", ...) —
+      // logged unconditionally (even for a socket that never joined a game)
+      // since this is exactly the "was it really a network drop, and why"
+      // question that used to require guessing from indirect evidence (see
+      // FEATURES.md §23).
+      logAction({ event: "disconnect", socketId: socket.id, gameCode, playerId, reason });
       if (!gameCode) return;
       const engine = gameRegistry.get(gameCode);
       if (!engine) return;

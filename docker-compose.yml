@@ -33,6 +33,14 @@ services:
       # different host port purely so you can `curl localhost:4001/health`
       # directly for debugging without going through the proxy.
       - "4001:4000"
+    volumes:
+      # Persistent, structured action log (connects/disconnects/every game
+      # action — see apps/server/src/logging/actionLog.ts) — bind-mounted
+      # to a plain host folder (not a named Docker volume) specifically so
+      # you can open it directly in Explorer/a text editor after a game
+      # night, no `docker compose exec` needed. Survives `docker compose
+      # down` and rebuilds, unlike the container's own stdout.
+      - ./logs:/app/apps/server/logs
     # `db push` keeps this MVP simple (no pre-generated migration files
     # required to boot). Once you've run `npm run prisma:migrate` locally
     # to create real migrations, switch this to `prisma migrate deploy`.

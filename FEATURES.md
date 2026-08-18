@@ -454,6 +454,23 @@ git checkout c24bde4~1   # état juste avant ce lot
 
 ---
 
+## 24. Journal d'actions persistant (18 août 2026) — ✅ Fait
+
+**Demande explicite de l'utilisateur** après le lot §23 : « je veux ajouter des logs sur chaque action, comme ça si y'a un problème on peut regarder les logs ». Jusqu'ici, le serveur ne faisait que `console.log`/`console.error` — visible uniquement via `docker compose logs server`, et perdu dès `docker compose down` ou un rebuild. C'est exactement pour ça que l'investigation du §23 a dû deviner les coupures de connexion indirectement via les logs HTTP de nginx (qui ne voit jamais les messages socket individuels) au lieu de les voir directement.
+
+**Ajouté** :
+- `apps/server/src/logging/actionLog.ts` — logger JSONL (un objet JSON par ligne, un fichier par jour UTC), volontairement sans dépendance externe (`appendFileSync`, pas de winston/pino — voir le piège npm install déjà documenté en §9). Rédaction automatique des champs sensibles (`hostToken`, `reconnectToken`, `password`, `token`) à n'importe quelle profondeur, jamais d'exception (`try/catch` autour de chaque écriture).
+- Câblé dans `apps/server/src/socket/handlers.ts` via `socket.use(...)` — un seul point d'entrée qui journalise CHAQUE événement socket entrant, automatiquement, sans avoir à modifier chacun des ~50 handlers individuellement. `connect` et `disconnect` (avec la vraie raison Socket.IO : `transport close`, `ping timeout`, etc.) journalisés séparément.
+- `docker-compose.yml` : nouveau volume `./logs:/app/apps/server/logs` sur le service `server` — un dossier ordinaire sur votre machine (pas un volume Docker nommé), visible directement dans l'explorateur de fichiers, qui survit à `docker compose down` et aux rebuilds.
+- `.gitignore` : `/logs/` — ce sont de vraies données de vraies parties, jamais commité.
+- 6 tests unitaires (`apps/server/src/logging/actionLog.test.ts`) : formatage, plusieurs entrées dans l'ordre, rotation par jour, rédaction à toute profondeur, valeurs non-sérialisables (callback d'ack) ignorées proprement, jamais d'exception même si le dossier ne peut pas être créé.
+
+**Commit** : à suivre dans ce même lot — voir le tag ci-dessous.
+
+**Vérifications effectuées** : suite complète 142/142 côté serveur (136 + 6 nouveaux), aucune régression. **Fait notable** : le sandbox de cette session avait `@types/node`/`@types/react` présents mais complètement vides dans `apps/web/node_modules` (contrairement à ce qui avait été supposé les lots précédents — un vrai `tsc --noEmit` n'avait encore jamais pu tourner) ; corrigé en installant ces deux paquets dans un dossier temporaire hors du point de montage puis en copiant leur contenu par-dessus (le point de montage lui-même est trop lent pour un `npm install`/une copie de `node_modules` complet — confirmé en le testant, pas juste supposé). Résultat : `apps/server` passe `tsc --noEmit` sans aucune erreur liée à ce lot (la seule erreur restante — client Prisma non généré — est le piège déjà documenté en §9, sans rapport) ; les 5 fichiers modifiés du lot §23 passent aussi sans erreur.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :

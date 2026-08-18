@@ -143,6 +143,19 @@ that second port on). If `off` errors, run `tailscale funnel status` first
   just "non-standard ports" (e.g. blocking WebSocket upgrades entirely, or
   the Funnel TLS handshake outright) — worth having them try mobile data
   once to confirm it's the network and not the app, same as before.
+- **Want to know exactly what happened during a game (who did what, when,
+  any disconnects)?** Every socket event — connects, disconnects (with
+  Socket.IO's own reason: "transport close", "ping timeout", etc.), and
+  every game action — is logged to `./logs/actions-YYYY-MM-DD.jsonl` at the
+  repo root (one JSON object per line, one file per day). This is a plain
+  folder on your own machine (bind-mounted from the `server` container —
+  see docker-compose.yml), not something inside Docker's own log storage,
+  so it survives `docker compose down` and rebuilds and you can just open
+  it in a text editor or VS Code. A quick way to filter it:
+  ```powershell
+  Get-Content logs\actions-2026-08-18.jsonl | Select-String "ABCD"   # everything for game code ABCD
+  Get-Content logs\actions-2026-08-18.jsonl | Select-String "disconnect"
+  ```
 
 ## What was changed in the repo to support this
 

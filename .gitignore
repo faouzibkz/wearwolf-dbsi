@@ -5,6 +5,10 @@ build/
 out/
 *.log
 npm-debug.log*
+# Persistent action log (apps/server/src/logging/actionLog.ts) — real
+# player/game data from real game nights, bind-mounted from docker-compose's
+# `server` service into ./logs at the repo root. Never committed.
+/logs/
 .env
 .env.local
 .env.*.local
