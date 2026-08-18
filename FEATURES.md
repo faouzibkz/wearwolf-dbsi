@@ -490,6 +490,18 @@ git checkout c24bde4~1   # état juste avant ce lot
 
 ---
 
+## 26. Bug réel trouvé en testant en direct : vote bloqué après l'élimination du Chef par un second tour (18 août 2026) — ✅ Corrigé
+
+**Rapport de l'utilisateur** en testant avec 4 comptes : « il restait 3 joueurs, le premier vote sur X, X vote sur Y, mais Y qui est le Chef (le dernier à voter) n'arrivait pas à voter pour le premier joueur ». Contrairement aux bugs précédents de cette session (réseau, timing), celui-ci s'est avéré être un **vrai bug de logique de jeu**, confirmé et reproduit avec certitude grâce au journal d'actions du §24 (qui a immédiatement révélé la vraie séquence : une égalité au tour 1 impliquant le Chef, une défense, puis un second tour) et à un test déterministe du moteur de jeu reproduisant exactement ce scénario.
+
+**Cause racine** : quand le vote décisif d'un second tour élimine le Chef, `finishEliminationAndProceed()` bloque délibérément la transition de phase (`hasPendingBlockers()`) en attendant que le Chef mourant désigne un successeur — c'est voulu, documenté, et correct. Le problème : **rien n'empêchait un AUTRE joueur de continuer à voter pendant cette pause**. La file d'attente de vote (`dayVoteQueue`) était déjà à `null` à ce moment (donc la vérification « c'est bien votre tour » ne s'appliquait plus), et le tour venait d'être remis à 1 par le même calcul (donc n'importe quel joueur vivant redevenait une cible « valide »). Résultat concret : un vote résiduel d'un autre joueur était soit silencieusement accepté sans jamais être compté, soit rejeté avec un message « Cible de vote invalide » complètement déroutant puisqu'il ne dit pas qu'une succession de Chef est en attente — exactement l'expérience « je choisis une cible mais Confirmer ne fait rien » rapportée.
+
+**Corrigé** : `GameEngine.castDayVote()` et `GameEngine.submitNightAction()` (même classe de bug possible côté nuit, si un tir de Chasseur reste en attente après une mort de nuit) rejettent maintenant explicitement toute tentative avec un message clair (« Le vote est en pause : en attente d'une action en cours... ») tant que `hasPendingBlockers()` est vrai, au lieu de laisser la logique de tour/cible habituelle (déjà remise à zéro) accepter ou rejeter confusément la tentative.
+
+**Tests** : `packages/game-engine/src/__tests__/pendingBlockersGuard.test.ts` (2 tests) — reproduit exactement le scénario rapporté (égalité tour 1 incluant le Chef → défense → tour 2 qui l'élimine → vote résiduel d'un autre joueur maintenant rejeté avec un message clair → la succession du Chef débloque bien la suite normalement) et la variante nuit/Chasseur. Suite complète du monorepo : 189 (moteur, +2) + 152 (serveur) + 37 (rating) + 12 (web) = **390 tests, tous verts**, aucune régression. `tsc --noEmit` propre.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :

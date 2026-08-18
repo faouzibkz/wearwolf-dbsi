@@ -537,6 +537,18 @@ export class GameEngine {
 
   submitNightAction(playerId: string, actionType: string, targetId?: string, guessedRoleId?: RoleId): void {
     if (this.state.phase !== "NIGHT") throw new Error("Ce n'est pas la nuit.");
+    // 18 août 2026 — same guard, same bug class as castDayVote above: a
+    // night kill that triggers a Chasseur's pending revenge shot leaves
+    // phase === "NIGHT" while tryResumeAfterBlockers() waits on
+    // submitChasseurShot(), even though every role's night action has
+    // already resolved for this night. Without this, a stray/late
+    // NIGHT_ACTION_SUBMIT (e.g. a retried request, or a slow client) could
+    // reach NightResolver mid-block instead of being cleanly rejected.
+    if (this.hasPendingBlockers()) {
+      throw new Error(
+        "La nuit est en pause : en attente d'une action en cours (tir du Chasseur ou succession du Chef).",
+      );
+    }
     NightResolver.submitNightAction(this.ctx(), playerId, actionType, targetId, guessedRoleId);
   }
 
@@ -1149,6 +1161,27 @@ export class GameEngine {
    */
   castDayVote(voterId: string, targetId: string): VoteManager.DayVoteOutcome | null {
     if (this.state.phase !== "DAY_VOTE") throw new Error("Ce n'est pas le moment de voter.");
+    // 18 août 2026 — real bug found via a live 4-player test game (see
+    // FEATURES.md §26): once a round's decisive vote eliminates the Chef,
+    // finishEliminationAndProceed() deliberately leaves phase === "DAY_VOTE"
+    // while it waits for chooseChefSuccessor() (see hasPendingBlockers's own
+    // doc comment) — dayVoteQueue is already null and dayVote.round/tiedIds
+    // were already reset by that same tally, so WITHOUT this guard a stray
+    // vote from another player slips through VoteManager.castDayVote's own
+    // checks entirely (no active queue means no turn-order check; round back
+    // to 1 means "any alive player" is a "valid" target) and gets silently
+    // recorded into a vote that will never be tallied — or, if it happens to
+    // target the just-eliminated ex-Chef, rejects with the confusing "Cible
+    // de vote invalide" instead of explaining that a succession choice is
+    // pending. This is exactly what a live playtest experienced as
+    // "selected a target but Confirmer did nothing." The identical class of
+    // bug exists for a pending Chasseur shot mid-NIGHT — see
+    // submitNightAction's matching guard below.
+    if (this.hasPendingBlockers()) {
+      throw new Error(
+        "Le vote est en pause : en attente d'une action en cours (tir du Chasseur ou succession du Chef).",
+      );
+    }
     VoteManager.castDayVote(this.ctx(), voterId, targetId);
     return this.advanceDayVoteQueue().outcome;
   }
