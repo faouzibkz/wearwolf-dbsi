@@ -1,0 +1,95 @@
+# Cloud Run version of proxy/nginx.conf -- same single-origin idea (see the
+# comment at the top of that file), adapted for two upstreams that are
+# themselves separate Cloud Run services (HTTPS, dynamic DNS) instead of
+# fixed docker-compose service names.
+#
+# 19 aout 2026 (FEATURES.md section 29) -- deploying web and server as two
+# separate *.run.app domains made the session cookie a third-party cookie
+# from the browser's point of view. Desktop browsers mostly tolerate that;
+# mobile Safari's Intelligent Tracking Prevention blocks/purges it even with
+# SameSite=None; Secure set correctly, which is exactly why "login works,
+# joining a game via code fails with 'you must be connected'" only ever
+# showed up on phones. Routing both services through this one proxy makes
+# the browser see ONE origin again, so the cookie goes back to being a
+# perfectly normal same-site cookie -- no browser-specific blocking possible,
+# same as the existing Tailscale/docker-compose setup already proves.
+#
+# SERVER_UPSTREAM and WEB_UPSTREAM are *.run.app HOSTNAMES ONLY (no scheme
+# -- the "https://" is hardcoded below since Cloud Run is HTTPS-only), filled
+# in at container start by nginx's own envsubst-on-templates entrypoint
+# (see proxy/Dockerfile.cloudrun) -- NOT baked into the image, so they can be
+# updated later with a plain `gcloud run services update --update-env-vars`
+# and no rebuild.
+#
+# proxy_pass targets are nginx *variables* (not literal upstream values) on
+# purpose: that's what makes nginx re-resolve DNS for them at request time
+# via the `resolver` directive below, instead of resolving once at startup
+# and caching it forever -- required here since Cloud Run URLs don't sit
+# behind a fixed IP.
+resolver 8.8.8.8 valid=30s;
+
+server {
+    listen 8080;
+
+    set $server_upstream "${SERVER_UPSTREAM}";
+    set $web_upstream "${WEB_UPSTREAM}";
+
+    # Socket.IO -- same reasoning as proxy/nginx.conf: long timeout,
+    # buffering off, Upgrade/Connection headers for the WebSocket handshake.
+    # proxy_ssl_server_name on + Host: $proxy_host are the two things that
+    # only matter because the upstream is HTTPS: Cloud Run's front end
+    # routes purely by SNI/Host, so both have to carry the *upstream's* own
+    # hostname, not the original client's Host header.
+    location /socket.io/ {
+        proxy_pass https://$server_upstream;
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # REST API -- auth, account/profile, history, badges, leaderboard.
+    location /api/ {
+        proxy_pass https://$server_upstream;
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # Plain health check, same server.
+    location = /health {
+        proxy_pass https://$server_upstream;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+    }
+
+    # This proxy's own health check -- Cloud Run pings the container root by
+    # default; don't make that depend on the server upstream being healthy.
+    location = /proxy-health {
+        return 200 "ok";
+        add_header Content-Type text/plain;
+    }
+
+    # Everything else -- the Next.js web app itself.
+    location / {
+        proxy_pass https://$web_upstream;
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

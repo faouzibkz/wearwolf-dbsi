@@ -1,0 +1,18 @@
+# Cloud Run version of the single-origin proxy (see nginx.cloudrun.conf.template).
+# Build from the REPO ROOT, same as apps/server/Dockerfile and apps/web/Dockerfile:
+#   docker build -f proxy/Dockerfile.cloudrun -t <image> .
+#
+# No custom entrypoint needed: the base nginx image already ships an
+# entrypoint script (/docker-entrypoint.d/20-envsubst-on-templates.sh) that
+# runs `envsubst` over every *.template file in /etc/nginx/templates/ using
+# ONLY the container's actual environment variables as the substitution
+# list -- nginx's own request-time variables ($http_upgrade, $remote_addr,
+# $proxy_host, etc.) are never touched, since they aren't real env vars.
+# That's what lets SERVER_UPSTREAM/WEB_UPSTREAM get filled in from
+# `gcloud run deploy --set-env-vars` at container start, with no rebuild
+# needed to change them later (see deploy-cloudrun.ps1).
+FROM nginx:1.27-alpine
+
+COPY proxy/nginx.cloudrun.conf.template /etc/nginx/templates/default.conf.template
+
+EXPOSE 8080

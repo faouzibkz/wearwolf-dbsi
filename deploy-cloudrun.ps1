@@ -10,7 +10,15 @@
 #
 # What this creates in GCP (europe-west1, project lucid-burner-425912-m8):
 #   - A small Cloud SQL Postgres instance (db-f1-micro, ~10-15 $/month)
-#   - Two Cloud Run services: loupgarou-server, loupgarou-web
+#   - Three Cloud Run services: loupgarou-server, loupgarou-web, and
+#     loupgarou-proxy (an nginx reverse proxy sitting in front of the other
+#     two -- see proxy/nginx.cloudrun.conf.template). Share THIS proxy's URL
+#     with players, not the web service's own URL: without it, web and
+#     server sit on two different *.run.app domains, which makes the login
+#     cookie a third-party cookie that mobile Safari blocks (desktop
+#     tolerates it, which is why this only ever broke on phones). The proxy
+#     puts everything back on one origin, exactly like the existing
+#     Tailscale/docker-compose setup.
 #   - The server runs with min=max=1 instance and CPU always allocated --
 #     this app keeps live game state (who's connected, whose turn it is,
 #     phase timers) in the server process's own memory, not in a shared
@@ -52,6 +60,7 @@ $ArHost        = "$Region-docker.pkg.dev"
 $ArRepo        = "applications"
 $ServerImage   = "$ArHost/$ProjectId/$ArRepo/loupgarou-server"
 $WebImage      = "$ArHost/$ProjectId/$ArRepo/loupgarou-web"
+$ProxyImage    = "$ArHost/$ProjectId/$ArRepo/loupgarou-proxy"
 
 $SqlInstance   = "loupgarou-db"
 $DbName        = "loupgarou"
@@ -59,6 +68,7 @@ $DbUser        = "loupgarou"
 
 $ServerService = "loupgarou-server"
 $WebService    = "loupgarou-web"
+$ProxyService  = "loupgarou-proxy"
 
 $Sha = (git rev-parse --short HEAD 2>$null)
 if (-not $Sha) { $Sha = "manual-$(Get-Date -Format 'yyyyMMdd-HHmmss')" }
@@ -245,10 +255,42 @@ Write-Host "Server deployed: $ServerUrl" -ForegroundColor Green
 # change, before deploying the new server image.
 
 # =========================================================================
-# 5. Build + push the web image (bakes in the server URL), deploy it
+# 5. Proxy, first pass: build + push + deploy just to learn its stable URL.
+#    WEB_UPSTREAM is a placeholder for now -- step 7 below patches it to the
+#    real web hostname once that exists (same "deploy now, patch the env var
+#    later" trick as CORS_ORIGIN already used, except this time it's needed
+#    on BOTH sides: web needs the proxy's URL baked in at BUILD time, and the
+#    proxy needs web's URL, so one of the two has to come first).
 # =========================================================================
-Write-Host "`n--- 5. Web: build, push, deploy ---" -ForegroundColor Cyan
-docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_SERVER_URL="$ServerUrl" -t "${WebImage}:$Sha" -t "${WebImage}:latest" .
+Write-Host "`n--- 5. Proxy: build, push, deploy (pass 1 -- learn its URL) ---" -ForegroundColor Cyan
+docker build -f proxy/Dockerfile.cloudrun -t "${ProxyImage}:$Sha" -t "${ProxyImage}:latest" .
+Assert-LastExitCode "proxy image build failed"
+docker push "${ProxyImage}:$Sha"
+Assert-LastExitCode "proxy image push failed"
+docker push "${ProxyImage}:latest"
+Assert-LastExitCode "proxy image push (latest tag) failed"
+
+$ServerHost = $ServerUrl -replace '^https?://', ''
+gcloud run deploy $ProxyService `
+    --image="${ProxyImage}:$Sha" `
+    --region=$Region `
+    --platform=managed `
+    --allow-unauthenticated `
+    --port=8080 `
+    --timeout=3600 `
+    --set-env-vars="SERVER_UPSTREAM=$ServerHost,WEB_UPSTREAM=web-not-deployed-yet.invalid"
+Assert-LastExitCode "proxy Cloud Run deploy failed"
+
+$ProxyUrl = gcloud run services describe $ProxyService --region=$Region --format="value(status.url)"
+Assert-LastExitCode "Could not read the proxy's Cloud Run URL"
+Write-Host "Proxy deployed (web upstream still a placeholder): $ProxyUrl" -ForegroundColor Green
+
+# =========================================================================
+# 6. Build + push the web image (bakes in the PROXY's URL, not the server's
+#    -- the browser must only ever talk to one origin), deploy it
+# =========================================================================
+Write-Host "`n--- 6. Web: build, push, deploy ---" -ForegroundColor Cyan
+docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_SERVER_URL="$ProxyUrl" -t "${WebImage}:$Sha" -t "${WebImage}:latest" .
 Assert-LastExitCode "web image build failed"
 docker push "${WebImage}:$Sha"
 Assert-LastExitCode "web image push failed"
@@ -268,18 +310,27 @@ Assert-LastExitCode "Could not read the web app's Cloud Run URL"
 Write-Host "Web deployed: $WebUrl" -ForegroundColor Green
 
 # =========================================================================
-# 6. Now that the web URL is known, point the server's CORS at it
+# 7. Now that the web URL is known: point the proxy at it, and point the
+#    server's CORS at the PROXY (that's the origin the browser actually
+#    sees now, not the web service's own URL).
 # =========================================================================
-Write-Host "`n--- 6. Wiring CORS_ORIGIN -> web URL ---" -ForegroundColor Cyan
+Write-Host "`n--- 7. Wiring proxy -> web, and CORS_ORIGIN -> proxy URL ---" -ForegroundColor Cyan
+$WebHost = $WebUrl -replace '^https?://', ''
+gcloud run services update $ProxyService `
+    --region=$Region `
+    --update-env-vars="WEB_UPSTREAM=$WebHost"
+Assert-LastExitCode "Failed to update WEB_UPSTREAM on the proxy"
+
 gcloud run services update $ServerService `
     --region=$Region `
-    --update-env-vars="CORS_ORIGIN=$WebUrl"
+    --update-env-vars="CORS_ORIGIN=$ProxyUrl"
 Assert-LastExitCode "Failed to update CORS_ORIGIN on the server"
 
 Write-Host "`n========================================================================" -ForegroundColor Green
 Write-Host " Done." -ForegroundColor Green
-Write-Host "   Web:    $WebUrl" -ForegroundColor White
-Write-Host "   Server: $ServerUrl (health check: $ServerUrl/health)" -ForegroundColor White
+Write-Host "   >>> Share THIS url with players: $ProxyUrl" -ForegroundColor White
+Write-Host "   (web:    $WebUrl -- internal, do not share, cookies will not work on phones from here)" -ForegroundColor DarkGray
+Write-Host "   (server: $ServerUrl -- internal, health check: $ServerUrl/health)" -ForegroundColor DarkGray
 Write-Host "========================================================================" -ForegroundColor Green
 Write-Host "`nGood to know:" -ForegroundColor Yellow
 Write-Host " - The server runs 1 always-on instance (min=max=1, CPU always allocated)." -ForegroundColor Yellow
@@ -296,3 +347,7 @@ Write-Host " - DB password is in .cloudsql-db-password.txt (gitignored) -- back 
 Write-Host "   somewhere safe; it's not recoverable from GCP, only resettable." -ForegroundColor Yellow
 Write-Host " - Re-running this whole script is safe: it reuses the existing Cloud SQL" -ForegroundColor Yellow
 Write-Host "   instance and skips the data migration (see .cloudsql-migrated)." -ForegroundColor Yellow
+Write-Host " - Always share the PROXY url ($ProxyUrl) with players, never the web" -ForegroundColor Yellow
+Write-Host "   service's own url. Web+server exist as separate Cloud Run services" -ForegroundColor Yellow
+Write-Host "   for build/deploy reasons only -- the browser should never talk to" -ForegroundColor Yellow
+Write-Host "   them directly, or the login cookie breaks on phones again." -ForegroundColor Yellow
