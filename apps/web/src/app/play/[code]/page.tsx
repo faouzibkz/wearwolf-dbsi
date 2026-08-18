@@ -405,15 +405,22 @@ export default function PlayPage() {
           disconnects, instead of silently timing them out. Without this
           banner that just looks like a frozen screen to everyone else — this
           makes the wait, and why, visible instead of confusing. Distinct
-          from an admin's own manual pause (state.disconnectPausedPlayerId is
-          null in that case), which isn't called out specially here. */}
-      {state.paused && state.disconnectPausedPlayerId && (
+          from an admin's own manual pause (isPausedForDisconnect is false in
+          that case), which isn't called out specially here.
+
+          19 août 2026 (§28) — deliberately NEVER names the player. It used
+          to (via state.disconnectPausedPlayerId, resolved to a nickname
+          here), and a real game reported that this let everyone watch whose
+          name showed up as "reconnecting" — which, since this only ever
+          fires while it's specifically that player's turn, told the whole
+          table which role was currently acting. The server now sends every
+          player a fully anonymous isPausedForDisconnect boolean instead
+          (see broadcast.ts's sanitizeForRoom) — this banner can say a pause
+          is happening, never who for. */}
+      {state.paused && state.isPausedForDisconnect && (
         <div className="rounded-lg border border-gold-400/40 bg-night-800/80 px-3 py-2 text-center text-sm text-gold-300">
-          ⏸ En pause — en attente de la reconnexion de{" "}
-          <strong>
-            {state.players.find((p) => p.id === state.disconnectPausedPlayerId)?.nickname ?? "un joueur"}
-          </strong>
-          . La partie reprendra automatiquement dès son retour.
+          ⏸ En pause — un·e joueur·se a un problème de connexion. La partie reprendra automatiquement dès son
+          retour.
         </div>
       )}
 

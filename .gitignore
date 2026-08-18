@@ -20,3 +20,8 @@ apps/server/generated/
 *.tsbuildinfo
 .deploy-marker
 infra/aws/images-*.json
+# deploy-cloudrun.ps1's own local state — a DB password in plaintext and a
+# raw pg_dump of real account/ranking data must never be committed.
+.cloudsql-db-password.txt
+.cloudsql-migrated
+loupgarou-dump.sql

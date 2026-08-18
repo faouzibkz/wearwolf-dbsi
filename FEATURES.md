@@ -523,6 +523,20 @@ Câblé côté serveur dans `apps/server/src/socket/handlers.ts` : `pauseForDisc
 
 ---
 
+## 28. Faille de confidentialité : le nom du joueur déconnecté était visible par toute la table (19 août 2026) — ✅ Corrigé
+
+**Rapport de l'utilisateur** : « quand quelqu'un a des problèmes, tous les joueurs voient que CE joueur (son nom) est en train de se reconnecter — donc quand c'est la nuit et que c'est à un joueur d'utiliser son pouvoir, tout le monde voit que ce joueur-là est en galère, et il devient facile de deviner son rôle puisqu'il n'a pas verrouillé son pouvoir et qu'on voit son nom se reconnecter ! »
+
+**Diagnostic** : deux mécanismes distincts fuyaient la même information. (1) Le roster persistant (`PlayerList.tsx`, section 20) affichait une icône ⚡ « Déconnecté » directement sur la ligne du joueur concerné, visible par tous, à tout moment — y compris pendant la nuit. (2) Le bandeau de pause automatique ajouté hier soir (section 27) affichait explicitement « En pause — en attente de la reconnexion de **[Nom]** ». Dans les deux cas, comme une déconnexion qui déclenche réellement quelque chose (icône visible, ou pause) ne coïncide quasiment jamais avec un moment aléatoire — elle coïncide très précisément avec le tour du joueur concerné (son étape de nuit séquentielle, son tour de vote...) — voir son nom apparaître à cet instant précis révèle indirectement mais très fiablement son rôle ou son tour d'action, exactement l'inverse de ce qu'une action de nuit cachée est censée garantir.
+
+**Corrigé** : `apps/server/src/socket/broadcast.ts` a maintenant une fonction `sanitizeForRoom()` — la diffusion `GAME_STATE` envoyée à toute la salle masque désormais systématiquement (a) le statut `isConnected` réel de tout joueur vivant (toujours renvoyé à `true`, qu'il soit réellement connecté ou non) et (b) `disconnectPausedPlayerId` (toujours renvoyé à `null`). Un nouveau champ neutre `isPausedForDisconnect` (booléen, sans identité) est ajouté à `GameStatePublic` pour que l'interface joueur puisse toujours afficher « une pause est en cours » sans jamais dire pour qui. Seule la diffusion `ADMIN_STATE` (visible uniquement par l'hôte de la partie, qui a légitimement besoin de savoir qui est réellement déconnecté pour gérer la partie) reçoit l'état complet, non filtré. Les joueurs morts/spectateurs ne sont pas concernés par ce filtrage — leur statut de connexion n'est plus un enjeu de confidentialité une fois éliminés, cohérent avec l'Afterlife qui leur montre déjà toutes les informations (section 17.3a).
+
+Côté interface : le bandeau de pause (`play/[code]/page.tsx`) ne nomme plus jamais personne — « En pause — un·e joueur·se a un problème de connexion » — et l'icône ⚡ du roster (`PlayerList.tsx`) est maintenant conditionnée à une nouvelle prop `showConnectionStatus` (fausse par défaut) que seule la page admin passe à `true`, puisque c'est la seule vue où voir qui est réellement déconnecté est légitime et nécessaire.
+
+**Tests** : 3 nouveaux tests dans `apps/server/src/socket/broadcast.test.ts` — un joueur vivant réellement déconnecté apparaît connecté dans la diffusion de salle mais déconnecté dans `ADMIN_STATE` ; un joueur MORT déconnecté n'est pas masqué (pas d'enjeu de confidentialité) ; `disconnectPausedPlayerId` est bien vidé côté salle (avec `isPausedForDisconnect: true` conservé) mais reste le vrai identifiant côté admin. Suite complète : 197 (moteur) + 155 (serveur, +3) + 37 (rating) + 12 (web) = **401 tests, tous verts**, aucune régression. `tsc --noEmit` propre sur tous les fichiers touchés.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :

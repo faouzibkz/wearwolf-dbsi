@@ -446,11 +446,27 @@ export interface GameStatePublic {
   /**
    * 18 août 2026 (§27) — set to the playerId the game is auto-paused for
    * (their disconnect happened while they were the one it's waiting on),
-   * distinct from an admin's manual pause (which leaves this null). Lets
-   * the UI show "En pause — en attente de la reconnexion de X" instead of a
-   * bare, unexplained "Paused".
+   * distinct from an admin's manual pause (which leaves this null).
+   *
+   * 19 août 2026 (§28) — real live-game report: broadcasting this to every
+   * player let everyone see exactly WHOSE name was reconnecting, and since
+   * this only ever fires while it's specifically that player's turn (their
+   * sequential night step, their vote turn, ...), it directly leaked which
+   * role was currently acting — the opposite of what a hidden night action
+   * is supposed to be. The server now sends the REAL playerId here only to
+   * the admin socket (ADMIN_STATE); every regular player's own GAME_STATE
+   * broadcast has this forced to null (see broadcast.ts's sanitizeForRoom)
+   * — use the identity-free isPausedForDisconnect below for player-facing
+   * UI instead.
    */
   disconnectPausedPlayerId: string | null;
+  /**
+   * 19 août 2026 (§28) — identity-free companion to disconnectPausedPlayerId
+   * above, safe to show every player: true whenever the game is frozen
+   * waiting on SOME disconnected player, without saying which one. This is
+   * what player-facing UI should actually check/display.
+   */
+  isPausedForDisconnect: boolean;
   nightNumber: number;
   dayNumber: number;
   players: PlayerPublic[];

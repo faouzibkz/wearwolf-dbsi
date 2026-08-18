@@ -12,7 +12,8 @@ import { SOCKET_EVENTS, type NightStepStatePayload } from "@loupgarou/shared";
 // §17's sandbox-constraints note).
 vi.mock("../db/persistence.js", () => ({ persistGame: vi.fn() }));
 
-import { pushNightStepState } from "./broadcast.js";
+import { pushNightStepState, broadcastGameState } from "./broadcast.js";
+import { gameRegistry } from "../gameRegistry.js";
 
 /**
  * Cahier de charge #2 §17.1d — server-side wiring for SEQUENTIAL night
@@ -146,5 +147,87 @@ describe("pushNightStepState", () => {
     // isSequentialNightMode() is false once we've left NIGHT -> no broadcast at all,
     // exactly like the SIMULTANEOUS-mode case above (nothing left to report).
     expect(emitted).toHaveLength(0);
+  });
+});
+
+/**
+ * 19 août 2026 (FEATURES.md §28) — real live-game report: broadcasting the
+ * TRUE isConnected/disconnectPausedPlayerId to the whole room let every
+ * player watch whose name flickered "reconnecting", which — since that
+ * only ever happens while it's specifically that player's turn — told the
+ * whole table which role was currently acting. broadcastGameState must
+ * send the room a version with that identity stripped, while still giving
+ * the admin the real thing.
+ */
+describe("broadcastGameState: room broadcast never leaks WHICH player is disconnected", () => {
+  function bootToDayVote(names: string[]) {
+    const engine = GameEngine.createGame({ roleCounts: { LOUP_GAROU: 1 } as any });
+    const ids: Record<string, string> = {};
+    for (const n of names) ids[n] = engine.addPlayer(n).id;
+    engine.startGame();
+    engine.volunteerForChef(ids[names[0]!]!);
+    engine.forceStartChefDebate();
+    engine.advanceChefSpeaker();
+    for (const n of names.slice(1)) engine.castChefVote(ids[n]!, ids[names[0]!]!);
+    engine.tallyChefVoteAndProceed();
+    engine.proceedFromChefRevealToDiscussion();
+    engine.endDay1Discussion();
+    if (engine.getPhase() === "NIGHT") engine.resolveNightAndProceed();
+    engine.proceedFromMorningToDay();
+    engine.endDayDiscussion();
+    return { engine, ids };
+  }
+
+  function findPayload(emitted: { room: string; event: string; payload: unknown }[], event: string) {
+    return emitted.find((e) => e.event === event)?.payload as any;
+  }
+
+  it("masks a plain disconnected alive player's isConnected in the room broadcast, but not in ADMIN_STATE", () => {
+    const { engine, ids } = bootToDayVote(["A", "B", "C", "D"]);
+    engine.setConnected(ids.B!, false);
+
+    gameRegistry.setAdminSocket(engine.getCode(), "admin-socket-1");
+    const { io, emitted } = fakeIo();
+    broadcastGameState(io, engine);
+
+    const roomState = findPayload(emitted, SOCKET_EVENTS.GAME_STATE);
+    const roomB = roomState.players.find((p: any) => p.id === ids.B);
+    expect(roomB.isConnected).toBe(true); // masked, even though they're really disconnected
+
+    const adminPayload = emitted.find((e) => e.room === "admin-socket-1");
+    const adminB = (adminPayload!.payload as any).state.players.find((p: any) => p.id === ids.B);
+    expect(adminB.isConnected).toBe(false); // admin sees the truth
+  });
+
+  it("does not mask a DEAD player's isConnected (no secrecy concern once they're out)", () => {
+    const { engine, ids } = bootToDayVote(["A", "B", "C", "D"]);
+    engine.adminKillPlayer(ids.B!);
+    engine.setConnected(ids.B!, false);
+
+    const { io, emitted } = fakeIo();
+    broadcastGameState(io, engine);
+
+    const roomState = findPayload(emitted, SOCKET_EVENTS.GAME_STATE);
+    const roomB = roomState.players.find((p: any) => p.id === ids.B);
+    expect(roomB.isConnected).toBe(false);
+  });
+
+  it("strips disconnectPausedPlayerId from the room broadcast but keeps isPausedForDisconnect true, while ADMIN_STATE keeps the real id", () => {
+    const { engine, ids } = bootToDayVote(["A", "B", "C", "D"]);
+    const currentVoter = engine.getCurrentDayVoterId()!;
+    engine.pauseForDisconnect(currentVoter);
+    expect(engine.getPublicState().paused).toBe(true);
+
+    gameRegistry.setAdminSocket(engine.getCode(), "admin-socket-2");
+    const { io, emitted } = fakeIo();
+    broadcastGameState(io, engine);
+
+    const roomState = findPayload(emitted, SOCKET_EVENTS.GAME_STATE);
+    expect(roomState.disconnectPausedPlayerId).toBeNull();
+    expect(roomState.isPausedForDisconnect).toBe(true);
+    expect(Object.values(ids)).toContain(currentVoter); // sanity: a real player id exists to have been hidden
+
+    const adminPayload = emitted.find((e) => e.room === "admin-socket-2");
+    expect((adminPayload!.payload as any).state.disconnectPausedPlayerId).toBe(currentVoter);
   });
 });

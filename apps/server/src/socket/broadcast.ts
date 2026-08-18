@@ -2,6 +2,7 @@ import type { Server } from "socket.io";
 import {
   SOCKET_EVENTS,
   type AdminStatePayload,
+  type GameStatePublic,
   type NightStepStatePayload,
   type RoleAssignedPayload,
 } from "@loupgarou/shared";
@@ -10,18 +11,56 @@ import { gameRegistry } from "../gameRegistry.js";
 import { persistGame } from "../db/persistence.js";
 
 /**
+ * 19 août 2026 (§28) — real live-game report: broadcasting every alive
+ * player's true `isConnected` (and, since §27, the disconnect-pause's
+ * `disconnectPausedPlayerId`) to the WHOLE room let every player watch
+ * whose name flickered to "reconnecting" — and since that only ever
+ * happens while it's specifically THAT player's turn (their sequential
+ * night step, their vote turn, ...), it directly told everyone else which
+ * role was currently acting. A hidden night action that announces its own
+ * actor by process of elimination isn't hidden at all.
+ *
+ * Strips exactly that identity from the copy sent to the room: every alive
+ * player's `isConnected` is forced to `true` (a player's OWN connection
+ * banner is already driven client-side by their own socket, never by this
+ * broadcast — see play/[code]/page.tsx's `socketConnected` state — so this
+ * costs nothing real), and `disconnectPausedPlayerId` is forced to `null`.
+ * `isPausedForDisconnect` (a plain boolean, no identity in it) is left
+ * alone, so player-facing UI can still say "someone's connection dropped,
+ * hang on" without saying who. Dead/spectator players are left untouched:
+ * once someone's out, their connection status isn't a secrecy concern —
+ * consistent with the Afterlife already showing full info to the dead
+ * (see FEATURES.md §17.3a).
+ *
+ * ADMIN_STATE is NOT sanitized — the admin genuinely needs the real
+ * identity to manage the game (nudge someone, decide whether to manually
+ * resume a stalled pause, etc.).
+ */
+function sanitizeForRoom(state: GameStatePublic): GameStatePublic {
+  return {
+    ...state,
+    disconnectPausedPlayerId: null,
+    players: state.players.map((p) => (p.isAlive ? { ...p, isConnected: true } : p)),
+  };
+}
+
+/**
  * Every mutating handler ends by calling this. It is the ONLY place that
  * sends state to clients, which makes "never leak hidden info" a property
  * of one function instead of something every handler has to remember.
  */
 export function broadcastGameState(io: Server, engine: GameEngine): void {
   const code = engine.getCode();
-  io.to(roomForGame(code)).emit(SOCKET_EVENTS.GAME_STATE, engine.getPublicState());
+  const fullState = engine.getPublicState();
+  io.to(roomForGame(code)).emit(SOCKET_EVENTS.GAME_STATE, sanitizeForRoom(fullState));
 
   const adminSocketId = gameRegistry.getAdminSocket(code);
   if (adminSocketId) {
     const payload: AdminStatePayload = {
-      state: engine.getPublicState(),
+      // Deliberately the real, un-sanitized state (see sanitizeForRoom's
+      // doc comment) -- the admin manages the game and needs to know who
+      // is actually disconnected, not just that someone is.
+      state: fullState,
       roles: engine.getAdminRoles(),
       logs: engine.getLogs(),
       config: engine.getConfig(),

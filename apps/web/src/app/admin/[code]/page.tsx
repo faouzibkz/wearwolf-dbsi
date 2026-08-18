@@ -434,7 +434,7 @@ function LobbyConfig({ code, admin, joinUrl }: { code: string; admin: AdminState
         </div>
         <p className="text-xs text-night-600 break-all">{joinUrl}</p>
         <h3 className="font-display text-night-100 pt-2">Joueurs</h3>
-        <PlayerList players={admin.state.players} />
+        <PlayerList players={admin.state.players} showConnectionStatus />
       </section>
     </div>
   );

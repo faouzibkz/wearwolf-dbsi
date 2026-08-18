@@ -1484,6 +1484,7 @@ export class GameEngine {
       phase: this.state.phase,
       paused: this.state.paused,
       disconnectPausedPlayerId: this.state.disconnectPausedPlayerId,
+      isPausedForDisconnect: this.isPausedForDisconnect(),
       nightNumber: this.state.nightNumber,
       dayNumber: this.state.dayNumber,
       players,

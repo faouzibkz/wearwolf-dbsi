@@ -9,6 +9,13 @@ export function PlayerList({
   selectedId,
   onSelect,
   disabledIds = [],
+  // 19 août 2026 (§28) — off by default on purpose: the broadcast every
+  // regular player receives already reports every alive player as
+  // connected (see broadcast.ts's sanitizeForRoom), so this prop is a no-op
+  // there regardless. Only the admin console (which receives the real,
+  // un-sanitized state) passes this true — the admin genuinely needs to
+  // see who's actually disconnected to manage the game; nobody else does.
+  showConnectionStatus = false,
 }: {
   players: PlayerPublic[];
   highlightId?: string | null;
@@ -16,6 +23,7 @@ export function PlayerList({
   selectedId?: string | null;
   onSelect?: (id: string) => void;
   disabledIds?: string[];
+  showConnectionStatus?: boolean;
 }) {
   return (
     <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -44,7 +52,11 @@ export function PlayerList({
             </span>
             <span className="flex items-center gap-1 shrink-0">
               {p.isChef && <span title="Chef du village">👑</span>}
-              {!p.isConnected && p.isAlive && <span className="text-xs text-night-600" title="Déconnecté">⚡</span>}
+              {showConnectionStatus && !p.isConnected && p.isAlive && (
+                <span className="text-xs text-night-600" title="Déconnecté">
+                  ⚡
+                </span>
+              )}
             </span>
           </li>
         );
