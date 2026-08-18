@@ -2,6 +2,8 @@
 
 Ce document résume comment l'application fonctionne aujourd'hui : l'architecture technique, toutes les règles du jeu, et toutes les améliorations ajoutées récemment. Objectif : vous donner une vue d'ensemble claire pour identifier ce qui mérite d'être amélioré ensuite.
 
+> **Note du 18 août 2026** : ce document est un instantané figé au 6 août (voir la date en bas) — beaucoup a été ajouté depuis (comptes/historique, XP/niveaux/MVP, badges, classements, Afterlife, rôle Prêtre, mode nuit séquentielle, proxy réseau, logs d'actions, retry automatique...) et n'a pas été réintégré ligne par ligne ici pour éviter de dupliquer un contenu qui vivrait ensuite en double. **`FEATURES.md` et `ARCHITECTURE.md`, à la racine du repo, sont les documents tenus à jour en continu** et reflètent l'état réel du code à chaque changement — c'est là qu'il faut regarder pour la liste complète et à jour. La section 8 ci-dessous résume seulement les deux ajouts de la session du 18 août.
+
 ---
 
 ## 1. Architecture technique
@@ -97,4 +99,16 @@ Quelques idées à évaluer en re-jouant avec ces nouveautés, sans que ce soit 
 
 ---
 
-*Document généré le 6 août 2026.*
+## 8. Ajouts de la session du 18 août 2026
+
+Deux problèmes concrets remontés en jouant en vrai (voir `FEATURES.md` §22-§25 pour tous les détails techniques) :
+
+- **"Parfois impossible de se connecter en wifi, ça marchait en 4G"** → toute l'appli (web + serveur de jeu) passe désormais par un seul port (via un petit proxy nginx) au lieu de deux — certains wifi (invités, hôtel, bureau) bloquent les ports non-standards, jamais la 4G. Corrigé.
+- **"Je sélectionne une cible mais Confirmer ne répond pas pendant ~15 secondes"** → root cause : un téléphone qui change d'onglet coupe réellement la connexion (comportement du système, pas un bug de l'appli) ; l'ancienne interface montrait "envoyé" même quand ça avait échoué. Deux corrections : (1) un bandeau visible + boutons désactivés dès qu'une déconnexion est détectée, honnête plutôt que trompeur, et (2) depuis ce soir, un **retry automatique et invisible** : si la confirmation échoue à cause d'un accroc réseau, l'appli réessaie toute seule (jusqu'à 2 fois) sans que le joueur ait besoin de remarquer ou re-cliquer, avec une garantie que l'action ne s'applique jamais deux fois même si le premier essai avait en fait réussi.
+- En bonus, chaque connexion/déconnexion et chaque action de jeu est maintenant enregistrée dans un fichier journal (`./logs/`) sur la machine qui héberge la partie, pour pouvoir déboguer un futur problème avec de vraies données plutôt qu'en devinant.
+
+388 tests automatisés au total sur l'ensemble du monorepo (moteur de jeu + rating + serveur + web) après ces ajouts, tous passants.
+
+---
+
+*Document généré le 6 août 2026 — voir la note en tête de document pour la mise à jour du 18 août.*

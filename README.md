@@ -107,6 +107,28 @@ recomputed from live game state on every call (never cached), so when Mowgli's f
 `roleId` flips to `LOUP_GAROU`, the very next membership check includes him automatically — no
 separate "add Mowgli to the wolf room" code path exists to forget.
 
+### Reliability: retries, idempotency, and action logs
+
+Every confirmable game action (night powers, all votes, Chasseur shoot, Barbie reveal — ~40 socket
+events in total) goes through one function client-side, `emitWithAck` (`apps/web/src/lib/socket.ts`).
+Since 18 août 2026 it does two things beyond just "emit and wait for an ack": it tags each logical
+call with a request id (reused across retries of that same call), and if the ack times out — a
+brief mobile network drop is the common real case — it silently retries up to twice more, waiting
+for the socket to reconnect if needed, before ever surfacing an error. A genuine application-level
+rejection (wrong turn, invalid target) is never retried and surfaces immediately.
+
+That retry is only safe because the server dedupes by that same request id
+(`apps/server/src/socket/idempotency.ts`): every one of the ~43 socket handlers is wrapped so a
+retried request replays the original cached response instead of re-running the handler a second
+time. This isn't cosmetic — some handlers have side effects that must fire exactly once per real
+click (the Voyante's private "you saw X" result message, the day-vote turn queue advancing) — see
+`ARCHITECTURE.md` §4.2 and `FEATURES.md` §25 for the full reasoning.
+
+Separately, every socket connect/disconnect (with Socket.IO's own reason string) and every game
+action is written to `./logs/actions-YYYY-MM-DD.jsonl` on the host machine (bind-mounted from the
+`server` container, survives restarts/rebuilds) — see `TAILSCALE_SETUP.md`'s Troubleshooting
+section for how to read it, and `FEATURES.md` §24 for why it was added.
+
 ### Hosting, without a shared password
 
 There's no `ADMIN_SECRET` anymore. Clicking **Créer une partie** on `/admin` always succeeds,
@@ -171,7 +193,16 @@ to `prisma migrate deploy` once you have real migrations checked in).
 ## Testing
 
 ```bash
-npm run test --workspace=packages/game-engine    # unit tests: roles, votes, ties, victory, Mowgli/Chasseur chains
+npm test    # everything: game-engine, rating, server, web — see below
+```
+
+Runs, in order: `packages/game-engine` (roles, votes, ties, victory, Mowgli/Chasseur chains — 187
+tests), `packages/rating` (37 tests), `apps/server` (socket handlers, persistence, badges, action
+logging, retry/idempotency — 152 tests), and `apps/web` (18 août 2026 — its first test suite: the
+`emitWithAck` retry policy and reconnect-safe retry loop, 12 tests). Each workspace's own `npm run
+test` (or `--workspace=apps/X`) runs just that slice if you're iterating on one piece.
+
+```bash
 npm run typecheck --workspace=apps/server
 npm run typecheck --workspace=apps/web
 ```

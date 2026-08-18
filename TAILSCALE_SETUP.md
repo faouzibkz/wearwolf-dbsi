@@ -156,6 +156,19 @@ that second port on). If `off` errors, run `tailscale funnel status` first
   Get-Content logs\actions-2026-08-18.jsonl | Select-String "ABCD"   # everything for game code ABCD
   Get-Content logs\actions-2026-08-18.jsonl | Select-String "disconnect"
   ```
+- **A player confirms a night action/vote right after a reconnect — do they
+  need to notice and re-click?** No, since 18 août 2026 (FEATURES.md §25).
+  If the confirmation's server acknowledgment doesn't arrive in time — the
+  common real case is a phone's connection blipping for a few seconds — the
+  app retries automatically, up to twice more, waiting for the connection
+  to come back if needed. The retry is safe to replay even if the original
+  request actually landed (its ack just got lost): the server recognizes
+  it's the same request and returns the same result instead of applying the
+  action twice. Only if it's still failing after every retry does the
+  player see an error and need to act. Look for `NIGHT_ACTION_SUBMIT`,
+  `DAY_VOTE_CAST`, etc. in the action log (above) if you ever want to see
+  this actually happen — a retried request shows up as two log lines for
+  the same event close together, both tied to the same player.
 
 ## What was changed in the repo to support this
 
