@@ -15,10 +15,13 @@ export function LoupVertGuessPanel({
   prompt,
   players,
   onSubmit,
+  isConnected = true,
 }: {
   prompt: LoupVertGuessPromptPayload;
   players: PlayerPublic[];
   onSubmit: (targetId: string, guessedRoleId: RoleId) => Promise<void>;
+  /** 18 août 2026 — see NightPromptPanel's identical prop for why. */
+  isConnected?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -69,13 +72,18 @@ export function LoupVertGuessPanel({
           <p className="text-xs text-night-100/60">
             2. Quel rôle pensez-vous que <strong className="text-gold-300">{target.nickname}</strong> a ?
           </p>
+          {!isConnected && (
+            <p className="text-sm text-gold-300 bg-gold-500/10 border border-gold-500/30 rounded-lg px-3 py-2">
+              🔌 Connexion perdue — reconnexion en cours…
+            </p>
+          )}
           {error && <p className="text-xs text-blood-400">{error}</p>}
           <div className="grid grid-cols-2 gap-2">
             {prompt.guessableRoleIds.map((roleId) => (
               <button
                 key={roleId}
                 className="btn-secondary text-sm disabled:opacity-40"
-                disabled={submitting}
+                disabled={submitting || !isConnected}
                 onClick={() => submitGuess(target.id, roleId)}
               >
                 {ROLE_METADATA[roleId].displayName}
@@ -84,7 +92,7 @@ export function LoupVertGuessPanel({
           </div>
           <button
             className="btn-secondary text-xs disabled:opacity-40"
-            disabled={submitting}
+            disabled={submitting || !isConnected}
             onClick={() => setSelected(null)}
           >
             ← Changer de cible

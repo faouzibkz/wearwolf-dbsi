@@ -31,6 +31,7 @@ export function NightPromptPanel({
   onSubmit,
   wolfRoom,
   onPreview,
+  isConnected = true,
 }: {
   prompt: NightPromptPayload;
   players: PlayerPublic[];
@@ -48,12 +49,26 @@ export function NightPromptPanel({
    * once submitted. See play/[code]/page.tsx's WOLF_TARGET_PREVIEW emit.
    */
   onPreview?: (targetId: string | null) => void;
+  /**
+   * 18 août 2026 — defaults to true for callers that don't track it (e.g.
+   * the Loup Vert stolen-power prompt). When false, every action button
+   * here is disabled and a banner explains why, instead of letting the
+   * player click into a submit that's guaranteed to time out because the
+   * socket is currently down (tab backgrounded, network drop, etc.) — see
+   * play/[code]/page.tsx's socketConnected tracking.
+   */
+  isConnected?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [sentChoice, setSentChoice] = useState<{ label: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const eligible = players.filter((p) => prompt.eligibleTargetIds.includes(p.id));
+  const connectionBanner = !isConnected ? (
+    <p className="text-sm text-gold-300 bg-gold-500/10 border border-gold-500/30 rounded-lg px-3 py-2">
+      🔌 Connexion perdue — reconnexion en cours… Réessayez dès que la connexion revient.
+    </p>
+  ) : null;
 
   // Best-effort: if this prompt disappears (submitted, or the night ended
   // out from under an undecided wolf) while a preview is still live,
@@ -138,7 +153,7 @@ export function NightPromptPanel({
                 <button
                   key={roleId}
                   className="btn-secondary text-sm disabled:opacity-40"
-                  disabled={submitting}
+                  disabled={submitting || !isConnected}
                   onClick={() =>
                     submitAndConfirm(
                       "ALIEN_GUESS",
@@ -152,16 +167,21 @@ export function NightPromptPanel({
                 </button>
               ))}
             </div>
-            <button className="btn-secondary text-xs" disabled={submitting} onClick={() => setSelected(null)}>
+            <button className="btn-secondary text-xs" disabled={submitting || !isConnected} onClick={() => setSelected(null)}>
               ← Changer de cible
             </button>
           </>
         )}
-        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
+        {connectionBanner}
+        {submitError && (
+          <p className="text-sm text-blood-300 bg-blood-500/10 border border-blood-500/30 rounded-lg px-3 py-2">
+            {submitError}
+          </p>
+        )}
         {!ctx.mustGuess && (
           <button
             className="btn-secondary w-full text-sm disabled:opacity-40"
-            disabled={submitting}
+            disabled={submitting || !isConnected}
             onClick={() => submitAndConfirm("SKIP", undefined, undefined, "Aucune tentative cette nuit")}
           >
             Ne rien tenter cette nuit
@@ -177,11 +197,16 @@ export function NightPromptPanel({
       <div className="space-y-4 animate-fade-in">
         <p className="text-sm text-night-100/80">{ACTION_LABELS.PRETRE_SHOOT}</p>
         <PlayerList players={eligible} selectable selectedId={selected} onSelect={setSelected} />
-        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
+        {connectionBanner}
+        {submitError && (
+          <p className="text-sm text-blood-300 bg-blood-500/10 border border-blood-500/30 rounded-lg px-3 py-2">
+            {submitError}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <button
             className="btn-primary disabled:opacity-40"
-            disabled={!selected || submitting}
+            disabled={!selected || submitting || !isConnected}
             onClick={() => {
               if (!selected) return;
               const target = eligible.find((p) => p.id === selected);
@@ -192,7 +217,7 @@ export function NightPromptPanel({
           </button>
           <button
             className="btn-secondary disabled:opacity-40"
-            disabled={submitting}
+            disabled={submitting || !isConnected}
             onClick={() => submitAndConfirm("SKIP", undefined, undefined, "Pouvoir gardé en réserve")}
           >
             Ne rien faire cette nuit
@@ -217,12 +242,17 @@ export function NightPromptPanel({
             "Les loups n'ont attaqué personne d'identifiable cette nuit."
           )}
         </p>
-        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
+        {connectionBanner}
+        {submitError && (
+          <p className="text-sm text-blood-300 bg-blood-500/10 border border-blood-500/30 rounded-lg px-3 py-2">
+            {submitError}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           {ctx.canHeal && (
             <button
               className="btn-primary disabled:opacity-40"
-              disabled={submitting}
+              disabled={submitting || !isConnected}
               onClick={() =>
                 submitAndConfirm("HEAL", undefined, undefined, `Potion de guérison sur ${attacked?.nickname ?? "la victime"}`)
               }
@@ -234,7 +264,7 @@ export function NightPromptPanel({
             <ExpandablePicker
               label="☠️ Utiliser la potion de poison"
               players={eligible}
-              disabled={submitting}
+              disabled={submitting || !isConnected}
               onPick={(id) => {
                 const target = eligible.find((p) => p.id === id);
                 submitAndConfirm("POISON", id, undefined, `Potion de poison sur ${target?.nickname ?? "?"}`);
@@ -243,7 +273,7 @@ export function NightPromptPanel({
           )}
           <button
             className="btn-secondary disabled:opacity-40"
-            disabled={submitting}
+            disabled={submitting || !isConnected}
             onClick={() => submitAndConfirm("SKIP", undefined, undefined, "Aucune action")}
           >
             Ne rien faire
@@ -315,11 +345,16 @@ export function NightPromptPanel({
             ✕ Annuler ma sélection
           </button>
         )}
-        {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
+        {connectionBanner}
+        {submitError && (
+          <p className="text-sm text-blood-300 bg-blood-500/10 border border-blood-500/30 rounded-lg px-3 py-2">
+            {submitError}
+          </p>
+        )}
         <div className="flex gap-2">
           <button
             className="btn-primary disabled:opacity-40"
-            disabled={!selected || submitting}
+            disabled={!selected || submitting || !isConnected}
             onClick={() => {
               if (!selected) return;
               const target = eligible.find((p) => p.id === selected);
@@ -338,11 +373,16 @@ export function NightPromptPanel({
     <div className="space-y-4 animate-fade-in">
       <p className="text-sm text-night-100/80">{ACTION_LABELS[prompt.actionType] ?? "Choisissez une cible."}</p>
       <PlayerList players={eligible} selectable selectedId={selected} onSelect={setSelected} />
-      {submitError && <p className="text-xs text-blood-400">{submitError}</p>}
+      {connectionBanner}
+      {submitError && (
+        <p className="text-sm text-blood-300 bg-blood-500/10 border border-blood-500/30 rounded-lg px-3 py-2">
+          {submitError}
+        </p>
+      )}
       <div className="flex gap-2">
         <button
           className="btn-primary disabled:opacity-40"
-          disabled={!selected || submitting}
+          disabled={!selected || submitting || !isConnected}
           onClick={() => {
             if (!selected) return;
             const target = eligible.find((p) => p.id === selected);

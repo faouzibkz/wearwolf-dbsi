@@ -130,6 +130,15 @@ export default function PlayPage() {
   // original host can relaunch, and this is how a player tab proves it).
   const [hostToken, setHostToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 18 août 2026 — surfaced after a real test session: switching between
+  // browser tabs (esp. on a phone) suspends the WebSocket, and a
+  // submitAndConfirm() call made while it's down just sits there until the
+  // 10s ack timeout fires — which LOOKS like "clicking Confirm does
+  // nothing" if the player has already looked away by the time the small
+  // error text renders. Tracking connection state explicitly lets every
+  // action panel show *why* up front (disable the button, say "reconnecting")
+  // instead of letting the player click into a guaranteed-to-fail window.
+  const [socketConnected, setSocketConnected] = useState(true);
   const [showRoleDetail, setShowRoleDetail] = useState(false);
   const [confirmingChefSkip, setConfirmingChefSkip] = useState(false);
   const announcedDeathsRef = useRef<string>("");
@@ -155,6 +164,7 @@ export default function PlayPage() {
     startClockSync();
 
     async function reconnect() {
+      setSocketConnected(true);
       try {
         await emitWithAck(SOCKET_EVENTS.PLAYER_RECONNECT, {
           gameCode: code,
@@ -167,6 +177,10 @@ export default function PlayPage() {
     }
     reconnect();
     socket.on("connect", reconnect);
+    function handleDisconnect() {
+      setSocketConnected(false);
+    }
+    socket.on("disconnect", handleDisconnect);
 
     socket.on(SOCKET_EVENTS.GAME_STATE, (s: GameStatePublic) => {
       setState(s);
@@ -302,6 +316,7 @@ export default function PlayPage() {
 
     return () => {
       socket.off("connect", reconnect);
+      socket.off("disconnect", handleDisconnect);
       socket.off(SOCKET_EVENTS.GAME_STATE);
       socket.off(SOCKET_EVENTS.ROLE_ASSIGNED);
       socket.off(SOCKET_EVENTS.NIGHT_PROMPT);
@@ -516,6 +531,7 @@ export default function PlayPage() {
           onClearLoupVertStolen={() => setLoupVertStolenPrompt(null)}
           onClearChasseur={() => setChasseurTargets(null)}
           onClearChefSuccession={() => setChefSuccessionTargets(null)}
+          isConnected={socketConnected}
         />
       )}
     </main>
@@ -541,6 +557,7 @@ function PhaseView({
   onClearLoupVertStolen,
   onClearChasseur,
   onClearChefSuccession,
+  isConnected,
 }: {
   state: GameStatePublic;
   me: GameStatePublic["players"][number] | null;
@@ -560,6 +577,8 @@ function PhaseView({
   onClearLoupVertStolen: () => void;
   onClearChasseur: () => void;
   onClearChefSuccession: () => void;
+  /** 18 août 2026 — threaded down to every action panel; see socketConnected in PlayPage. */
+  isConnected: boolean;
 }) {
   // Reset whenever the phase changes (the parent remounts this component
   // with a `key={state.phase}`, but keeping this here too is cheap and
@@ -737,6 +756,7 @@ function PhaseView({
               const { emitWithAck } = await import("@/lib/socket");
               await emitWithAck(SOCKET_EVENTS.CHEF_VOTE_CAST, { candidateId });
             }}
+            isConnected={isConnected}
           />
         </section>
       );
@@ -781,6 +801,7 @@ function PhaseView({
                 const { emitWithAck } = await import("@/lib/socket");
                 await emitWithAck(SOCKET_EVENTS.BARBIE_REVEAL_SUBMIT, { targetId });
               }}
+              isConnected={isConnected}
             />
           )}
           {canForceNightfall && (
@@ -938,6 +959,7 @@ function PhaseView({
                   await emitWithAck(SOCKET_EVENTS.NIGHT_ACTION_SUBMIT, { actionType, targetId, guessedRoleId });
                   onClearPrompt();
                 }}
+                isConnected={isConnected}
               />
             </section>
           )}
@@ -954,6 +976,7 @@ function PhaseView({
                 await emitWithAck(SOCKET_EVENTS.LOUP_VERT_GUESS_SUBMIT, { targetId, guessedRoleId });
                 onClearLoupVertGuess();
               }}
+              isConnected={isConnected}
             />
           )}
           {loupVertStolenPrompt && (
@@ -967,6 +990,7 @@ function PhaseView({
                   await emitWithAck(SOCKET_EVENTS.LOUP_VERT_STOLEN_POWER_SUBMIT, { actionType, targetId });
                   onClearLoupVertStolen();
                 }}
+                isConnected={isConnected}
               />
             </section>
           )}
@@ -1222,6 +1246,7 @@ function PhaseView({
               const { emitWithAck } = await import("@/lib/socket");
               await emitWithAck(SOCKET_EVENTS.DAY_VOTE_CAST, { targetId });
             }}
+            isConnected={isConnected}
           />
 
           {order.length > 0 && (

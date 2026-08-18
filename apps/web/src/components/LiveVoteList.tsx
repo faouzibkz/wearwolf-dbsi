@@ -28,6 +28,7 @@ export function LiveVoteList({
   myId,
   interactive,
   onSelect,
+  isConnected = true,
 }: {
   candidates: PlayerPublic[];
   allPlayers: PlayerPublic[];
@@ -38,6 +39,13 @@ export function LiveVoteList({
   /** false for spectators/dead players: they see the live tally, but can't vote. */
   interactive: boolean;
   onSelect: (id: string) => Promise<void>;
+  /**
+   * 18 août 2026 — when false (socket currently down), voting is disabled
+   * and a banner explains why, instead of letting a tap arm/confirm a vote
+   * that's guaranteed to time out. See play/[code]/page.tsx's
+   * socketConnected tracking and NightPromptPanel's identical treatment.
+   */
+  isConnected?: boolean;
 }) {
   const [armedId, setArmedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -45,12 +53,17 @@ export function LiveVoteList({
 
   const nicknameOf = (id: string) => allPlayers.find((p) => p.id === id)?.nickname ?? "?";
   const myVoteTargetId = myId ? dayVotes[myId] : undefined;
-  const locked = Boolean(myVoteTargetId) || submitting;
+  const locked = Boolean(myVoteTargetId) || submitting || !isConnected;
 
   const maxWeight = Math.max(1, ...candidates.map((c) => dayVoteTally[c.id] ?? 0));
 
   return (
     <ul className="space-y-2">
+      {!isConnected && (
+        <p className="text-sm text-gold-300 bg-gold-500/10 border border-gold-500/30 rounded-lg px-3 py-2 text-center mb-2">
+          🔌 Connexion perdue — reconnexion en cours… Votre vote ne peut pas être envoyé pour l'instant.
+        </p>
+      )}
       {error && <p className="text-xs text-blood-300 text-center -mt-1 mb-2">{error}</p>}
       {candidates.map((player) => {
         const voterIds = Object.entries(dayVotes)

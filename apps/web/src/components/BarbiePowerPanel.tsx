@@ -14,10 +14,13 @@ export function BarbiePowerPanel({
   players,
   myId,
   onUse,
+  isConnected = true,
 }: {
   players: PlayerPublic[];
   myId: string;
   onUse: (targetId: string) => Promise<void>;
+  /** 18 août 2026 — see NightPromptPanel's identical prop for why. */
+  isConnected?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
@@ -65,9 +68,18 @@ export function BarbiePowerPanel({
           Si c&apos;est un loup : il/elle meurt et vous devenez Chef du village. Sinon : vous mourrez
           tous/toutes les deux. Cette action est irréversible.
         </p>
+        {!isConnected && (
+          <p className="text-sm text-gold-300 bg-gold-500/10 border border-gold-500/30 rounded-lg px-3 py-2">
+            🔌 Connexion perdue — reconnexion en cours…
+          </p>
+        )}
         {error && <p className="text-xs text-blood-400">{error}</p>}
         <div className="flex justify-center gap-2">
-          <button className="btn-primary disabled:opacity-40" disabled={submitting} onClick={() => confirmUse(pending)}>
+          <button
+            className="btn-primary disabled:opacity-40"
+            disabled={submitting || !isConnected}
+            onClick={() => confirmUse(pending)}
+          >
             Confirmer
           </button>
           <button
