@@ -113,8 +113,16 @@ Either leave it running (it survives reboots since you used `--bg`, and
 nobody can do anything without the link), or shut it off cleanly:
 
 ```
-tailscale funnel 3000 off
+tailscale funnel --https=443 off
 ```
+
+**Note on Tailscale CLI versions:** older Tailscale versions turned Funnel
+off with `tailscale funnel 3000 off` — newer ones (confirmed 18 août 2026)
+reject that with "the CLI for serve and funnel has changed" and want
+`--https=<public port> off` instead (`--https=443` for the normal case,
+`--https=8443` if you're still cleaning up an old pre-proxy setup that had
+that second port on). If `off` errors, run `tailscale funnel status` first
+— it prints the exact `off` command it wants, right under each active entry.
 
 ## Troubleshooting
 
