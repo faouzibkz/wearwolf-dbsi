@@ -400,6 +400,23 @@ export default function PlayPage() {
         <CountdownTimer endsAt={state.phaseEndsAt} />
       </header>
 
+      {/* 18 août 2026 (§27) — the game auto-pauses (freezes every countdown,
+          no auto-skip) the instant the player it's currently waiting on
+          disconnects, instead of silently timing them out. Without this
+          banner that just looks like a frozen screen to everyone else — this
+          makes the wait, and why, visible instead of confusing. Distinct
+          from an admin's own manual pause (state.disconnectPausedPlayerId is
+          null in that case), which isn't called out specially here. */}
+      {state.paused && state.disconnectPausedPlayerId && (
+        <div className="rounded-lg border border-gold-400/40 bg-night-800/80 px-3 py-2 text-center text-sm text-gold-300">
+          ⏸ En pause — en attente de la reconnexion de{" "}
+          <strong>
+            {state.players.find((p) => p.id === state.disconnectPausedPlayerId)?.nickname ?? "un joueur"}
+          </strong>
+          . La partie reprendra automatiquement dès son retour.
+        </div>
+      )}
+
       {role && showRoleDetail && (
         <div onClick={() => setShowRoleDetail(false)} className="cursor-pointer">
           <RoleCard roleId={role} compact teammates={wolfTeammates} />

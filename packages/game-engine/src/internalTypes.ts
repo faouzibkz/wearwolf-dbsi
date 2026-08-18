@@ -190,6 +190,15 @@ export interface GameInternalState {
    * (or the current phase has no timer at all).
    */
   pausedRemainingMs: number | null;
+  /**
+   * 18 août 2026 (§27) — set to a playerId exactly when pauseForDisconnect()
+   * is the reason `paused` is currently true, so resumeFromDisconnect() can
+   * tell "we froze this for a disconnected required-actor, safe to
+   * auto-resume" apart from "the admin paused this on purpose, leave it
+   * alone" (see GameEngine.pauseForDisconnect's doc comment). Null whenever
+   * not auto-paused for this reason.
+   */
+  disconnectPausedPlayerId: string | null;
   players: Map<string, InternalPlayer>;
   playerOrder: string[];
   nightNumber: number;

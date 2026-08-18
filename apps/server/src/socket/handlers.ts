@@ -321,6 +321,10 @@ export function registerSocketHandlers(io: Server): void {
         if (existingPlayerId) {
           const existing = engine.getPlayers().find((p) => p.id === existingPlayerId)!;
           engine.setConnected(existing.id, true);
+          // 18 août 2026 (§27) — see the matching pauseForDisconnect() call in
+          // the "disconnect" handler below for the full rationale: a no-op
+          // unless THIS reconnect is what the game was actually waiting on.
+          engine.resumeFromDisconnect(existing.id);
           socket.data.gameCode = engine.getCode();
           socket.data.playerId = existing.id;
           gameRegistry.setCurrentSocket(existing.id, socket.id);
@@ -359,6 +363,8 @@ export function registerSocketHandlers(io: Server): void {
         const session = readSessionFromCookieHeader(socket.handshake.headers.cookie);
         if (session) gameRegistry.setPlayerUserId(player.id, session.userId);
         engine.setConnected(player.id, true);
+        // 18 août 2026 (§27) — see pauseForDisconnect()'s call site below.
+        engine.resumeFromDisconnect(player.id);
         socket.data.gameCode = engine.getCode();
         socket.data.playerId = player.id;
         gameRegistry.setCurrentSocket(player.id, socket.id);
@@ -438,6 +444,22 @@ export function registerSocketHandlers(io: Server): void {
       // isCurrentSocket doc comment.
       if (playerId && gameRegistry.isCurrentSocket(playerId, socket.id)) {
         engine.setConnected(playerId, false);
+        // 18 août 2026 (§27) — real live-game incident (FEATURES.md §27): a
+        // hard per-turn timeout (30s sequential-night step, 25s day-vote
+        // turn, etc.) doesn't care WHY a player hasn't acted yet — it fires
+        // just the same whether they're thinking or their wifi dropped. A
+        // Salvateur whose connection blipped during their own night step had
+        // their protection silently skipped with zero record; a day-voter
+        // caught by a mass network drop got skipped the same way mid-vote.
+        // Neither is a "the game rejected an action" bug — the action never
+        // reached the server at all. Freezing the clock the instant the
+        // player the game is CURRENTLY waiting on drops (see
+        // GameEngine.pauseForDisconnect's doc comment for why this is scoped
+        // to only that player, not every disconnect) means a short blip
+        // costs nothing, and a long outage simply pauses instead of forcing
+        // a bad auto-resolution — the admin can still always force-resume
+        // manually if someone is truly gone for good.
+        engine.pauseForDisconnect(playerId);
         sync(io, engine);
       }
     });

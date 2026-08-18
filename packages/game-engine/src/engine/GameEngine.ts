@@ -61,6 +61,7 @@ export class GameEngine {
       phase: "LOBBY",
       paused: false,
       pausedRemainingMs: null,
+      disconnectPausedPlayerId: null,
       players: new Map(),
       playerOrder: [],
       nightNumber: 0,
@@ -947,6 +948,65 @@ export class GameEngine {
   }
 
   /**
+   * 18 août 2026 (§27) — every player id the game is, right now, actually
+   * waiting on to make a move. Used exclusively by the server's
+   * disconnect/reconnect handlers (see pauseForDisconnect/resumeFromDisconnect
+   * below) to decide whether THIS specific disconnect matters enough to
+   * freeze the phase timer, instead of naively pausing on every disconnect
+   * (which would let one unrelated player's flaky wifi stall the whole
+   * table even during someone ELSE's turn) or never pausing at all (which is
+   * the bug this exists to fix — see FEATURES.md §27 for the live-game
+   * incident: a disconnected Salvateur's 30s sequential-night step timed out
+   * with zero protection ever recorded, and a disconnected day-voter's turn
+   * got silently skipped by the same mechanism).
+   *
+   * Deliberately covers pending blockers (Chasseur shot / Chef succession)
+   * FIRST and unconditionally: those can interrupt NIGHT or DAY_VOTE at any
+   * moment (see hasPendingBlockers's own doc comment) and always take
+   * priority over whatever the surrounding phase would otherwise say.
+   */
+  getCurrentActionRequiredPlayerIds(): string[] {
+    if (this.state.pendingChefSuccessionDeadChefId) return [this.state.pendingChefSuccessionDeadChefId];
+    if (this.state.pendingChasseurShooterIds.length > 0) return [...this.state.pendingChasseurShooterIds];
+
+    switch (this.state.phase) {
+      case "NIGHT":
+        // getNightPrompts() is already both "only players who haven't
+        // submitted yet tonight" AND, in SEQUENTIAL mode, "only this step's
+        // role(s)" — exactly "who are we waiting on right now" for either
+        // night mode, with no extra branching needed here.
+        return this.getNightPrompts().map(({ player }) => player.id);
+      case "CHEF_DEBATE": {
+        const id = this.getCurrentChefDebateSpeakerId();
+        return id ? [id] : [];
+      }
+      case "DAY_1_DISCUSSION":
+      case "DAY_DISCUSSION": {
+        const id = this.getCurrentDaySpeakerId();
+        return id ? [id] : [];
+      }
+      case "CHEF_SECOND_DEBATE": {
+        if (this.isSecondDebateChoicePending()) {
+          const chefId = this.getChefId();
+          return chefId ? [chefId] : [];
+        }
+        const id = this.getCurrentSecondDebateSpeakerId();
+        return id ? [id] : [];
+      }
+      case "TIE_DEFENSE": {
+        const id = this.getCurrentTieDefenseSpeakerId();
+        return id ? [id] : [];
+      }
+      case "DAY_VOTE": {
+        const id = this.getCurrentDayVoterId();
+        return id ? [id] : [];
+      }
+      default:
+        return [];
+    }
+  }
+
+  /**
    * Auto-progress safety net: if a pending Chasseur shot and/or Chef
    * succession is never resolved by the player in question (AFK,
    * disconnected, indecisive), a fully-automatic game must not freeze
@@ -1319,6 +1379,60 @@ export class GameEngine {
       this.state.phaseEndsAt = Date.now() + this.state.pausedRemainingMs;
       this.state.pausedRemainingMs = null;
     }
+    this.state.disconnectPausedPlayerId = null;
+  }
+
+  /**
+   * 18 août 2026 (§27) — automatic counterpart to the admin's manual pause,
+   * fired by the server the instant a player disconnects WHILE they are the
+   * one the game is currently waiting on (see getCurrentActionRequiredPlayerIds).
+   * Reuses the exact same pause() freeze-the-clock mechanism the admin's
+   * button already relies on — every scheduler that respects
+   * `getPublicState().paused` (schedulePhaseTimer, schedulePendingBlockerTimer
+   * in apps/server/src/socket/timers.ts) already stops arming its
+   * setTimeout while paused, for free, with no changes needed there.
+   *
+   * A no-op if `playerId` isn't actually who we're waiting on right now
+   * (some other, unrelated player dropped — never freeze the whole table
+   * for that), if we're already paused for this exact player (a flappy
+   * connection sending repeated disconnect events must not re-stash
+   * `pausedRemainingMs` on top of an already-frozen value, which would
+   * silently grant extra time on every flap), or if the game is ALREADY
+   * paused for some other reason (the admin hit pause) — in that case we
+   * deliberately do NOT take ownership of it, so that resumeFromDisconnect()
+   * won't later auto-resume a pause the admin put there on purpose. Worst
+   * case if that overlap happens: the admin's own manual resume re-arms the
+   * normal timer, which still falls back to the ordinary timeout/skip
+   * behavior if this player is somehow still gone by then.
+   */
+  pauseForDisconnect(playerId: string): void {
+    if (this.state.disconnectPausedPlayerId === playerId) return;
+    if (this.state.paused) return;
+    if (!this.getCurrentActionRequiredPlayerIds().includes(playerId)) return;
+    this.pause();
+    this.state.disconnectPausedPlayerId = playerId;
+  }
+
+  /**
+   * Counterpart to pauseForDisconnect — called on reconnect. Only actually
+   * resumes if WE were the one holding the game paused for this exact
+   * player: if the admin also manually paused (or manually resumed) in the
+   * meantime, resume()/ADMIN_RESUME's own handler already cleared
+   * `disconnectPausedPlayerId`, so this becomes a harmless no-op instead of
+   * fighting the admin's explicit call.
+   */
+  resumeFromDisconnect(playerId: string): void {
+    if (this.state.disconnectPausedPlayerId !== playerId) return;
+    this.state.disconnectPausedPlayerId = null;
+    this.resume();
+  }
+
+  isPausedForDisconnect(): boolean {
+    return this.state.disconnectPausedPlayerId !== null;
+  }
+
+  getDisconnectPausedPlayerId(): string | null {
+    return this.state.disconnectPausedPlayerId;
   }
 
   endGame(winner: Team | null = null): void {
@@ -1369,6 +1483,7 @@ export class GameEngine {
       code: this.state.code,
       phase: this.state.phase,
       paused: this.state.paused,
+      disconnectPausedPlayerId: this.state.disconnectPausedPlayerId,
       nightNumber: this.state.nightNumber,
       dayNumber: this.state.dayNumber,
       players,

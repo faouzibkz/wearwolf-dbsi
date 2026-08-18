@@ -502,6 +502,27 @@ git checkout c24bde4~1   # état juste avant ce lot
 
 ---
 
+## 27. Les micro-coupures réseau ne doivent plus jamais faire « sauter » le tour de quelqu'un (18 août 2026) — ✅ Corrigé
+
+**Rapport de l'utilisateur**, en pleine partie réelle (9 joueurs) : trois incidents dans la même soirée. (1) Le Salvateur a affirmé avoir protégé quelqu'un la nuit 1 — cette personne est morte quand même. (2) Un joueur (Lounis) n'a pas pu voter après la discussion du jour et le groupe a dû arrêter la partie. (3) Le Chasseur a rapporté avoir « eu du mal » à désigner un nouveau Chef à temps.
+
+**Diagnostic, confirmé par le journal d'actions (§24)** :
+- *Salvateur* : la config de cette partie utilisait le mode de nuit SEQUENTIAL avec un délai de 30s par étape (`timers.night`, aucune durée dédiée par rôle). **Aucune action `PROTECT` n'a jamais été reçue par le serveur cette nuit-là** — le tour du Salvateur a très probablement expiré silencieusement (`forceAdvanceNightStep()`) avant que son choix n'arrive, sans qu'aucune protection ne soit jamais enregistrée. Le loup a donc tué sans opposition : ce n'est pas que la protection « n'a pas marché », c'est qu'elle n'est jamais arrivée.
+- *Lounis* : au moment précis où la partie passait en `DAY_VOTE`, une coupure réseau a touché 6 des 9 connexions en l'espace de 4 secondes (20:35:42–20:35:46) — et, contrairement aux deux coupures plus courtes du début de soirée, celle-ci ne s'est **jamais rétablie** dans les 10 minutes suivantes (plus aucune action, plus aucune reconnexion dans le journal). C'est cette panne-là, pas un bug de vote, qui a forcé l'arrêt.
+- *Chasseur* : le délai `chefSuccession` (30s) a expiré normalement et désigné un successeur au hasard, comme prévu par la mécanique — mais sans aucun compte à rebours visible à l'écran (voir « reste à faire » ci-dessous), l'expérience vécue est celle d'un choix « qui n'a pas marché » plutôt que d'un délai qui s'est simplement écoulé.
+
+**Cause racine commune** : chaque tour (nuit séquentielle, vote du jour, débat, tir du Chasseur, succession du Chef) a un délai fixe qui ne tient aucun compte de l'état de connexion du joueur concerné — une coupure de 2 secondes pile pendant son tour coûtait exactement la même chose qu'une vraie absence.
+
+**Corrigé** : `GameEngine.getCurrentActionRequiredPlayerIds()` calcule, pour n'importe quelle phase, la liste exacte des joueurs que la partie attend *en ce moment précis* (le joueur de nuit séquentielle actif, l'orateur/voteur dont c'est le tour, le Chef en attente de choisir ses débatteurs bonus, le tireur Chasseur ou le Chef mourant en attente de successeur — ces deux derniers toujours prioritaires). `GameEngine.pauseForDisconnect(playerId)` / `resumeFromDisconnect(playerId)` réutilisent exactement le mécanisme de pause manuelle de l'admin déjà existant (`pause()`/`resume()`/`pausedRemainingMs`) : dès que le joueur dont c'est le tour se déconnecte, toute la partie se met en pause (aucun délai ne s'écoule, aucun saut automatique) ; dès qu'il se reconnecte, la partie reprend avec **exactement** le temps qu'il lui restait, que la coupure ait duré 1 seconde ou 10 minutes. La déconnexion d'un joueur qui n'est PAS celui qu'on attend ne fait rien (la table entière ne se fige pas pour une coupure sans rapport). Un joueur connecté mais simplement lent/inactif reste soumis au délai normal — seule une vraie déconnexion suspend le compte à rebours, pour éviter qu'une partie ne reste bloquée indéfiniment si quelqu'un abandonne réellement (l'admin garde toujours la main : `ADMIN_RESUME` relance le décompte normalement).
+
+Câblé côté serveur dans `apps/server/src/socket/handlers.ts` : `pauseForDisconnect()` sur `disconnect`, `resumeFromDisconnect()` sur `PLAYER_JOIN` (reprise de siège existant) et `PLAYER_RECONNECT` — aucun changement nécessaire dans `timers.ts`, qui respectait déjà `paused` pour tous ses délais (nuit séquentielle, débat, vote, tir Chasseur/succession). Un nouveau bandeau (`apps/web/src/app/play/[code]/page.tsx`) affiche « En pause — en attente de la reconnexion de X » à tout le monde pendant ce type de pause, pour ne pas donner l'impression d'un écran figé sans explication.
+
+**Tests** : `packages/game-engine/src/__tests__/disconnectAutoPause.test.ts` (8 tests) — pause/no-op selon que le joueur déconnecté est ou non celui qu'on attend (vote du jour, nuit séquentielle, blocages en attente), reprise avec le bon joueur uniquement, non-interférence avec une pause manuelle de l'admin (ne prend jamais la main sur une pause admin existante, et `resume()` admin efface toujours la marque de pause automatique), et préservation exacte du temps restant via horloge simulée. Suite complète : 197 (moteur, +8) + 152 (serveur) + 37 (rating) + 12 (web) = **398 tests, tous verts**, aucune régression.
+
+**Reste à faire** (identifié mais pas encore construit, pour ne pas complexifier davantage une soirée déjà en cours) : le tir du Chasseur et la succession du Chef n'affichent toujours aucun compte à rebours visible côté joueur (contrairement à toutes les autres invites, qui utilisent déjà `<CountdownTimer>`) — c'est une amélioration UX distincte du correctif ci-dessus.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :

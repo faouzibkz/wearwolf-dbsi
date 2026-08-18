@@ -443,6 +443,14 @@ export interface GameStatePublic {
   code: string;
   phase: Phase;
   paused: boolean;
+  /**
+   * 18 août 2026 (§27) — set to the playerId the game is auto-paused for
+   * (their disconnect happened while they were the one it's waiting on),
+   * distinct from an admin's manual pause (which leaves this null). Lets
+   * the UI show "En pause — en attente de la reconnexion de X" instead of a
+   * bare, unexplained "Paused".
+   */
+  disconnectPausedPlayerId: string | null;
   nightNumber: number;
   dayNumber: number;
   players: PlayerPublic[];
