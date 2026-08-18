@@ -9,9 +9,21 @@ once.
 software, signing into your own Tailscale account, running commands in your
 own terminal). None of it can be done by Claude on your behalf — Tailscale
 needs to run on the actual machine hosting the game, authenticated as you.
-What Claude *has* already done: made the code changes needed so this works
-cleanly (see "What was changed in the repo" at the bottom). Everything from
-here down is on you, and it's short.
+What Claude *has* already done: made the code/infra changes needed so this
+works cleanly (see "What was changed in the repo" at the bottom). Everything
+from here down is on you, and it's short.
+
+**18 août 2026 update:** the app now sits behind a small reverse proxy
+(`proxy/nginx.conf`, a new `proxy` service in `docker-compose.yml`) that
+fronts both the web app and the game server on **one single port**. You now
+only need **one** `tailscale funnel` command instead of two, and there's no
+more `:8443` in any URL. This replaced the old two-port setup after real
+game reports of "works on mobile data, can't connect on wifi" — many wifi
+networks (guest/hotel/office/some home routers) block outbound traffic on
+non-standard ports like 8443 while leaving 443 untouched; cellular data
+essentially never blocks anything. Routing everything through one port
+removes that failure mode entirely. If you set this app up before that date,
+re-read this whole doc — the port-8443 instructions below no longer apply.
 
 ## One-time setup
 
@@ -49,34 +61,40 @@ here down is on you, and it's short.
    docker compose up -d --build
    ```
 
-4. **Expose both ports** with Tailscale (`--bg` = runs in the background, so
+   This now also starts a `proxy` container (nginx) listening on port 3000
+   — it's what actually serves both the web app and the game server/socket
+   traffic from here on. The `web` and `server` containers themselves moved
+   to ports 3001/4001, reachable directly on your own machine only, for
+   debugging (see Troubleshooting below); nothing else needs to know about
+   those two ports.
+
+4. **Expose port 3000** with Tailscale (`--bg` = runs in the background, so
    it keeps working after you close the terminal):
 
    ```
    tailscale funnel --bg 3000
-   tailscale funnel --bg --https=8443 4000
    ```
 
-   - Port `3000` (the web app) becomes `https://your-laptop-name.tailXXXXX.ts.net`
-   - Port `4000` (the game server) becomes `https://your-laptop-name.tailXXXXX.ts.net:8443`
+   That's it — one command, one port. Run `tailscale funnel status` anytime
+   to confirm it's listed.
 
-   Run `tailscale funnel status` anytime to confirm both are listed.
-
-5. **Point the web app at the public server URL, and allow it through CORS.**
+5. **Point the web app at its own public URL, and allow it through CORS.**
    Edit your `.env` file (create it from `.env.example` if you haven't) and
    set, using YOUR actual `tailXXXXX.ts.net` domain from step 2:
 
    ```
-   NEXT_PUBLIC_SERVER_URL="https://your-laptop-name.tailXXXXX.ts.net:8443"
+   NEXT_PUBLIC_SERVER_URL="https://your-laptop-name.tailXXXXX.ts.net"
    CORS_ORIGIN="http://localhost:3000,https://your-laptop-name.tailXXXXX.ts.net"
    ```
 
-   (`CORS_ORIGIN` now accepts a comma-separated list — see below — so you can
+   No port on either line — same URL for the page and the game connection.
+   (`CORS_ORIGIN` accepts a comma-separated list — see below — so you can
    keep testing on `localhost` at the same time as friends join over Funnel.)
 
 6. **Apply the change.** The web app bakes `NEXT_PUBLIC_SERVER_URL` in at
    build time, so it needs a rebuild; the server reads `CORS_ORIGIN` at
-   startup, so it just needs a restart:
+   startup, so it just needs a restart; the proxy just needs to exist (no
+   env vars of its own):
 
    ```
    docker compose up -d --build web
@@ -85,8 +103,9 @@ here down is on you, and it's short.
 
 7. **Share the join link**: `https://your-laptop-name.tailXXXXX.ts.net` —
    that's the same URL you'd put behind the admin dashboard's QR code. Send
-   it to your 10 friends; they open it in any browser, no install needed.
-   Keep the admin dashboard (`/admin`) to yourself.
+   it to your friends; they open it in any browser, no install needed, and
+   it works the same whether they're on wifi or mobile data. Keep the admin
+   dashboard (`/admin`) to yourself.
 
 ## When you're done for the night
 
@@ -94,7 +113,6 @@ Either leave it running (it survives reboots since you used `--bg`, and
 nobody can do anything without the link), or shut it off cleanly:
 
 ```
-tailscale funnel --https=8443 4000 off
 tailscale funnel 3000 off
 ```
 
@@ -102,16 +120,31 @@ tailscale funnel 3000 off
 
 - **Friends can load the page but can't connect / stuck on "Connexion à la
   partie…":** almost always means `NEXT_PUBLIC_SERVER_URL` wasn't rebuilt
-  into the web image, or doesn't match the server's actual Funnel URL
-  (including the `:8443`). Re-check step 5–6.
+  into the web image, or doesn't match the Funnel URL exactly (no port).
+  Re-check steps 5–6.
 - **CORS error in the browser console:** `CORS_ORIGIN` doesn't include the
   Funnel URL, or the server wasn't restarted after editing `.env`.
 - **`tailscale funnel` says Funnel isn't enabled:** re-run the approval flow
   from step 2 — it needs to be approved from a browser once per tailnet.
+- **Want to check the server or web app directly, bypassing the proxy?**
+  They're still reachable on your own machine at `http://localhost:4001`
+  (server — try `/health`) and `http://localhost:3001` (web). Neither is
+  exposed to the internet; only port 3000 (the proxy) is ever funneled.
+- **Someone still reports connection trouble on a specific wifi network
+  after this update:** that network is likely blocking something beyond
+  just "non-standard ports" (e.g. blocking WebSocket upgrades entirely, or
+  the Funnel TLS handshake outright) — worth having them try mobile data
+  once to confirm it's the network and not the app, same as before.
 
 ## What was changed in the repo to support this
 
-- `apps/server/src/config.ts`: `CORS_ORIGIN` is now parsed as a
-  comma-separated list instead of a single origin, so you can allow both
-  your local dev origin and a tunnel URL (Tailscale, Cloudflare, ngrok, ...)
-  at the same time without swapping the env var back and forth.
+- **18 août 2026 — single-port proxy:** added `proxy/nginx.conf` and a new
+  `proxy` service in `docker-compose.yml` that fronts both `web` and
+  `server` on one port (host 3000 → proxy → `web:3000` or `server:4000`
+  depending on the path). `web`/`server` moved to host ports 3001/4001 for
+  direct local debugging only. This is what let the two separate Funnel
+  ports (3000 + 8443) collapse into one.
+- `apps/server/src/config.ts`: `CORS_ORIGIN` is parsed as a comma-separated
+  list instead of a single origin, so you can allow both your local dev
+  origin and a tunnel URL (Tailscale, Cloudflare, ngrok, ...) at the same
+  time without swapping the env var back and forth.

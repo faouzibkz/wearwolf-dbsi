@@ -159,9 +159,21 @@ describe("idleCleanup.sweepIdleGames", () => {
     // handler does via requireGame()), then advance to just past the
     // ORIGINAL deadline — it should have survived because the clock reset.
     const halfway = Date.now() + IDLE_LOBBY_MS / 2;
-    vi.spyOn(Date, "now").mockReturnValue(halfway);
+    // Bug fix (18 août 2026): this used to be two separate `vi.spyOn(Date,
+    // "now")` calls — one to mock, a second (discarding the first spy's
+    // reference) just to call .mockRestore() on. That second call doesn't
+    // restore the REAL Date.now; it wraps the already-mocked one and
+    // "restores" back to THAT, so Date.now() stayed frozen at `halfway`
+    // for the rest of the test. That silently broke the very thing this
+    // test exists to guard: `justPastOriginalDeadline` below ended up
+    // computed relative to `halfway` instead of the real original time,
+    // landing past the RESET deadline too and making the assertion fail —
+    // i.e. this test was (accidentally) proving a real game could get
+    // closed early right after its idle clock was reset. Keeping the one
+    // spy instance and restoring that exact instance fixes it.
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(halfway);
     gameRegistry.requireGame(engine.getCode());
-    vi.spyOn(Date, "now").mockRestore();
+    dateSpy.mockRestore();
 
     const justPastOriginalDeadline = Date.now() + IDLE_LOBBY_MS + 1000;
     const closed = sweepIdleGames(io, justPastOriginalDeadline);

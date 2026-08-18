@@ -29,7 +29,10 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       DATABASE_URL: postgresql://loupgarou:loupgarou@postgres:5432/loupgarou?schema=public
     ports:
-      - "4000:4000"
+      # Not the public port anymore (see `proxy` below) — kept mapped to a
+      # different host port purely so you can `curl localhost:4001/health`
+      # directly for debugging without going through the proxy.
+      - "4001:4000"
     # `db push` keeps this MVP simple (no pre-generated migration files
     # required to boot). Once you've run `npm run prisma:migrate` locally
     # to create real migrations, switch this to `prisma migrate deploy`.
@@ -44,12 +47,32 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        NEXT_PUBLIC_SERVER_URL: ${NEXT_PUBLIC_SERVER_URL:-http://localhost:4000}
+        # Same-origin as the page itself once the proxy is in front of
+        # everything — see proxy/nginx.conf and TAILSCALE_SETUP.md. Only
+        # override this in .env if you're doing something unusual.
+        NEXT_PUBLIC_SERVER_URL: ${NEXT_PUBLIC_SERVER_URL:-http://localhost:3000}
     restart: unless-stopped
     depends_on:
       - server
     ports:
-      - "3000:3000"
+      # Not the public port anymore (see `proxy` below) — kept mapped to a
+      # different host port purely for direct debugging without the proxy.
+      - "3001:3000"
+
+  # Single public entry point — fronts both `web` and `server` on one port
+  # so a Tailscale Funnel (or any tunnel) only ever needs to expose this
+  # one. See proxy/nginx.conf for the routing and why this replaced the old
+  # two-port (3000 + 8443) setup.
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+      - server
+    ports:
+      - "3000:80"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   postgres_data:
