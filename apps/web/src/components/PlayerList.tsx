@@ -36,10 +36,11 @@ export function PlayerList({
             onClick={() => clickable && onSelect?.(p.id)}
             className={[
               "rounded-lg border px-3 py-2 text-sm flex items-center justify-between gap-2 transition",
+              "select-none touch-manipulation [&_*]:pointer-events-none",
               p.isAlive ? "border-night-600 bg-night-800/70" : "border-night-700 bg-night-900/40 opacity-60",
               highlightId === p.id ? "ring-2 ring-gold-400" : "",
               selectedId === p.id ? "border-blood-400 bg-blood-500/20" : "",
-              clickable ? "cursor-pointer hover:border-gold-400/60" : "",
+              clickable ? "cursor-pointer hover:border-gold-400/60 active:scale-[0.98] active:border-gold-400" : "",
             ].join(" ")}
           >
             <span className="flex flex-col min-w-0">

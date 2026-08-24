@@ -8,6 +8,12 @@ export const metadata: Metadata = {
   description: "Application compagnon pour animer vos parties de Loup-Garou.",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr" className="dark">

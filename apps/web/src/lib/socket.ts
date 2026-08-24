@@ -10,12 +10,15 @@ let socket: Socket | null = null;
 /** One shared Socket.IO connection per browser tab, created lazily on first use. */
 export function getSocket(): Socket {
   if (!socket) {
-    // withCredentials so the httpOnly session cookie set by /api/auth/*
-    // (see apps/server/src/auth/cookies.ts) actually rides along on the
-    // socket handshake — that's how PLAYER_JOIN/PLAYER_RECONNECT know which
-    // account is behind this connection, with no token ever touching a
-    // socket payload.
-    socket = io(SERVER_URL, { autoConnect: true, transports: ["websocket", "polling"], withCredentials: true });
+    socket = io(SERVER_URL, {
+      autoConnect: true,
+      transports: ["websocket", "polling"],
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000,
+    });
   }
   return socket;
 }
@@ -36,7 +39,7 @@ export type AckResponse<T = unknown> = { ok: true; data?: T } | { ok: false; err
  * reports from a real 10-player game. `.timeout()` guarantees this always
  * settles one way or the other within a bounded time.
  */
-const ACK_TIMEOUT_MS = 10_000;
+const ACK_TIMEOUT_MS = 4_000; // au lieu de 10_000
 
 /**
  * Minimal shape emitWithAckOn actually needs from a socket, so tests can

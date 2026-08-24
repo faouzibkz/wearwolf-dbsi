@@ -22,7 +22,7 @@
  */
 
 export const MAX_ATTEMPTS = 3;
-export const RETRY_DELAYS_MS: readonly number[] = [1500, 3000];
+export const RETRY_DELAYS_MS: readonly number[] = [500, 1000]; // au lieu de [1500, 3000]
 
 if (RETRY_DELAYS_MS.length !== MAX_ATTEMPTS - 1) {
   // Defensive — keeps the two constants from silently drifting apart if
