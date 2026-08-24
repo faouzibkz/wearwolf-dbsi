@@ -252,7 +252,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   loupBlancRule: { mode: "EVERY_SECOND_NIGHT" },
   chefVoteBonusThreshold: 6,
   secondDebateSlots: 2,
-  autoProgress: false,
+  autoProgress: true,
   soundEffectsEnabled: true,
   name: "Partie sans nom",
   nightMode: "SIMULTANEOUS",

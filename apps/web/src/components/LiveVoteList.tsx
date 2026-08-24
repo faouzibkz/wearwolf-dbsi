@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PlayerPublic } from "@loupgarou/shared";
+import { useResetOnReconnect } from "@/lib/useResetOnReconnect";
 
 /**
  * The day elimination vote is an open ballot: every player sees, live, how
@@ -51,6 +52,10 @@ export function LiveVoteList({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useResetOnReconnect(() => {
+    setSubmitting(false);
+  });
+
   const nicknameOf = (id: string) => allPlayers.find((p) => p.id === id)?.nickname ?? "?";
   const myVoteTargetId = myId ? dayVotes[myId] : undefined;
   const locked = Boolean(myVoteTargetId) || submitting || !isConnected;
@@ -62,6 +67,11 @@ export function LiveVoteList({
       {!isConnected && (
         <p className="text-sm text-gold-300 bg-gold-500/10 border border-gold-500/30 rounded-lg px-3 py-2 text-center mb-2">
           🔌 Connexion perdue — reconnexion en cours… Votre vote ne peut pas être envoyé pour l'instant.
+        </p>
+      )}
+      {submitting && (
+        <p className="text-xs text-gold-300/70 text-center animate-pulse-slow mb-2">
+          ⏳ Envoi du vote en cours…
         </p>
       )}
       {error && <p className="text-xs text-blood-300 text-center -mt-1 mb-2">{error}</p>}
@@ -97,12 +107,13 @@ export function LiveVoteList({
             }}
             className={[
               "rounded-lg border px-3 py-2 transition-all duration-300",
+              "select-none touch-manipulation [&_*]:pointer-events-none",
               isMyVote
                 ? "border-blood-400 bg-blood-500/20"
                 : isArmed
                   ? "border-gold-400 bg-gold-400/10"
                   : "border-night-700 bg-night-800/70",
-              clickable ? "cursor-pointer hover:border-gold-400/60" : "opacity-50 cursor-not-allowed",
+              clickable ? "cursor-pointer hover:border-gold-400/60 active:scale-[0.98]" : "opacity-50 cursor-not-allowed",
             ].join(" ")}
           >
             <div className="flex items-center justify-between gap-2">

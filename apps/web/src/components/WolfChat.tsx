@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { WolfChatMessagePayload, WolfRoomStatePayload } from "@loupgarou/shared";
 import { SOCKET_EVENTS } from "@loupgarou/shared";
 import { emitWithAck } from "@/lib/socket";
+import { useResetOnReconnect } from "@/lib/useResetOnReconnect";
 
 /**
  * Only ever rendered when the server has pushed a WOLF_ROOM_STATE payload
@@ -18,12 +19,26 @@ export function WolfChat({
   messages: WolfChatMessagePayload[];
 }) {
   const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  useResetOnReconnect(() => {
+    setSending(false);
+  });
 
   async function send() {
     const text = draft.trim();
-    if (!text) return;
-    setDraft("");
-    await emitWithAck(SOCKET_EVENTS.WOLF_CHAT_SEND, { message: text });
+    if (!text || sending) return;
+    setSendError(null);
+    setSending(true);
+    try {
+      await emitWithAck(SOCKET_EVENTS.WOLF_CHAT_SEND, { message: text });
+      setDraft(""); // vidé seulement après confirmation du serveur
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Échec de l'envoi. Réessayez.");
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -40,16 +55,18 @@ export function WolfChat({
           </p>
         ))}
       </div>
+      {sendError && <p className="text-xs text-blood-300">{sendError}</p>}
       <div className="flex gap-2">
         <input
           className="input"
           value={draft}
+          disabled={sending}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder="Écrire aux autres loups…"
         />
-        <button className="btn-primary" onClick={send}>
-          Envoyer
+        <button className="btn-primary disabled:opacity-40" onClick={send} disabled={sending}>
+          {sending ? "…" : "Envoyer"}
         </button>
       </div>
     </section>

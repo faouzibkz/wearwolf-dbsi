@@ -553,6 +553,27 @@ Côté interface : le bandeau de pause (`play/[code]/page.tsx`) ne nomme plus ja
 
 ---
 
+## 30. Merge de la branche `wael` : correctifs tactile/mobile (24 août 2026)
+
+Wael (autre développeur sur le repo) a ouvert une branche `wael` avec un seul commit, contenant plusieurs correctifs visant le même symptôme que celui remonté par l'utilisateur (joueurs sur téléphone qui peinent à voter ou utiliser leur pouvoir de nuit). Revue complète faite avant fusion : branche récupérée (`git fetch`), diff lu fichier par fichier, suite de tests complète (401 tests) et `tsc --noEmit` exécutés sur la branche isolée — aucune régression, aucune nouvelle erreur de type.
+
+**Fusionné tel quel** (bons correctifs, ciblés sur le symptôme réel) :
+- `layout.tsx` : `viewport` (device-width, pas de zoom) — évite que le zoom tactile du navigateur interfère avec les taps.
+- `LiveVoteList.tsx` / `PlayerList.tsx` : classes `touch-manipulation`/`select-none`/`active:scale` — supprime le délai de ~300ms que les navigateurs mobiles ajoutent aux taps pour distinguer un simple tap d'un double-tap de zoom, cause connue et bien documentée de "mon tap ne réagit pas" sur mobile.
+- `useResetOnReconnect.ts` (nouveau) : hook partagé qui réinitialise l'état "submitting/sending" d'un composant dès que le socket se reconnecte — évite qu'un ack perdu pendant une coupure mobile laisse un bouton bloqué indéfiniment. Appliqué à `LiveVoteList` et `WolfChat`.
+- `WolfChat.tsx` : le brouillon de message n'est plus vidé de façon optimiste avant l'ack — corrige un vrai bug (un message perdu sur connexion instable avait l'air envoyé alors qu'il ne l'était pas, sans possibilité de réessayer). Applique à `WolfChat` la même règle déjà établie ailleurs dans ce repo ("jamais de confirmation avant le vrai accusé de réception").
+- `socket.ts` : options de reconnexion Socket.IO explicites (délai 500ms/max 3s) — proches des valeurs par défaut de la librairie, rend le comportement explicite plutôt qu'implicite.
+- `retryPolicy.ts` / `socket.ts` : délais de retry réduits (1500/3000ms → 500/1000ms) et timeout d'ack réduit (10s → 4s) — échoue et réessaie plus vite sur connexion instable. Non validé contre une connexion réellement dégradée ; à surveiller pendant les prochaines parties réelles.
+- `packages/shared/src/types.ts` : `DEFAULT_GAME_CONFIG.autoProgress` passé de `false` à `true` — chaque nouvelle partie avance désormais automatiquement les phases par défaut (timer géré côté serveur dans `timers.ts`), sauf si l'admin décoche la case. Sans rapport avec les taps mobiles, mais gardé tel que Wael l'a écrit à la demande explicite de l'utilisateur.
+
+**Corrigé avant fusion** : la branche de Wael supprimait plusieurs commentaires de documentation existants (`LiveVoteList.tsx`, `WolfChat.tsx`) en même temps que ses correctifs fonctionnels. Ces commentaires ont été restaurés manuellement en gardant tous ses changements de code intacts — voir le commit de fusion pour le détail exact.
+
+**Écarté avant fusion, resté commenté dans le code tel quel** (`play/[code]/page.tsx`) : les imports et le rendu de `NotesButton` et `RoleCompositionButton` étaient commentés (pas proprement supprimés) dans la branche de Wael, désactivant silencieusement ces deux fonctionnalités déjà livrées (notes personnelles, rooster des rôles). Repéré et signalé à l'utilisateur avant fusion ; gardé tel quel à sa demande explicite — à clarifier avec Wael (oubli de debug local, ou décision volontaire ?).
+
+**Rollback** : tag `pre-wael-merge-rollback-point` sur le commit juste avant cette fusion.
+
+---
+
 ## Recommandation pour la suite
 
 Fait et déployé (Phases 1, 2a, 2b, 3 — en production, cahier de charge #1) :
